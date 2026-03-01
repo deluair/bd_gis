@@ -1,0 +1,222 @@
+"""
+Flood extent mapping – monsoon vs dry season classification,
+seasonal inundation, extreme flood analysis, and district-level statistics.
+"""
+import ee
+import config as cfg
+from data_acquisition import (
+    get_study_area, get_seasonal_composite, get_admin_boundaries
+)
+from water_classification import classify_water, compute_water_area
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Annual Seasonal Water Mapping
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_annual_water_extents(year, region=None, sensor="landsat"):
+    """
+    Classify water extent for dry and monsoon seasons in a given year.
+    Returns dict with water masks and area stats.
+    Falls back to fixed thresholds if Otsu fails (e.g. small ROI or sparse data).
+    """
+    if region is None:
+        region = get_study_area()
+
+    # Dry season composite & water classification
+    dry_composite = get_seasonal_composite(year, "dry", sensor, region)
+    try:
+        dry_water = classify_water(dry_composite, region=region, method="otsu")
+    except Exception:
+        dry_water = classify_water(dry_composite, region=region, method="fixed")
+
+    # Monsoon composite & water classification
+    monsoon_composite = get_seasonal_composite(year, "monsoon", sensor, region)
+    try:
+        monsoon_water = classify_water(monsoon_composite, region=region, method="otsu")
+    except Exception:
+        monsoon_water = classify_water(monsoon_composite, region=region, method="fixed")
+
+    # Seasonal inundation = monsoon water minus permanent (dry) water
+    # Rename to "water" so compute_water_area can find the band
+    seasonal_flood = monsoon_water.And(dry_water.Not()).rename("water")
+
+    # Area calculations
+    dry_area = compute_water_area(dry_water, region)
+    monsoon_area = compute_water_area(monsoon_water, region)
+    seasonal_area = compute_water_area(seasonal_flood, region)
+
+    return {
+        "year": year,
+        "dry_water": dry_water,
+        "monsoon_water": monsoon_water,
+        "seasonal_flood": seasonal_flood,
+        "dry_composite": dry_composite,
+        "monsoon_composite": monsoon_composite,
+        "dry_area_km2": dry_area,
+        "monsoon_area_km2": monsoon_area,
+        "seasonal_area_km2": seasonal_area,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Multi-Year Flood Time Series
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_flood_time_series(start_year, end_year, region=None):
+    """
+    Build a time series of seasonal flood extents.
+    Returns list of {year, dry_area_km2, monsoon_area_km2, seasonal_area_km2}.
+    """
+    if region is None:
+        region = get_study_area()
+
+    results = []
+    for year in range(start_year, end_year + 1):
+        try:
+            extents = get_annual_water_extents(year, region)
+            results.append({
+                "year": year,
+                "dry_area_km2": extents["dry_area_km2"],
+                "monsoon_area_km2": extents["monsoon_area_km2"],
+                "seasonal_area_km2": extents["seasonal_area_km2"],
+            })
+        except Exception as e:
+            print(f"  Skipping {year}: {e}")
+    return results
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Extreme Flood Year Analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def analyze_extreme_flood(year, region=None):
+    """
+    Detailed analysis for extreme flood years.
+    Compares peak monsoon extent to long-term average.
+    """
+    if region is None:
+        region = get_study_area()
+
+    # Target year monsoon
+    extents = get_annual_water_extents(year, region)
+
+    # 5-year average around the event (excluding the event year) for context
+    ref_years = [y for y in range(year - 3, year + 3) if y != year]
+    ref_monsoon_areas = []
+    for y in ref_years:
+        try:
+            ref = get_annual_water_extents(y, region)
+            ref_monsoon_areas.append(ref["monsoon_area_km2"])
+        except Exception:
+            pass
+
+    if ref_monsoon_areas:
+        avg_ref = ee.Number(0)
+        for a in ref_monsoon_areas:
+            avg_ref = avg_ref.add(a)
+        avg_ref = avg_ref.divide(len(ref_monsoon_areas))
+    else:
+        avg_ref = ee.Number(0)
+
+    return {
+        "year": year,
+        "monsoon_area_km2": extents["monsoon_area_km2"],
+        "reference_avg_km2": avg_ref,
+        "anomaly_km2": extents["monsoon_area_km2"].subtract(avg_ref),
+        "monsoon_water": extents["monsoon_water"],
+        "dry_water": extents["dry_water"],
+        "seasonal_flood": extents["seasonal_flood"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# District-Level Statistics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_district_flood_stats(water_mask, districts_fc):
+    """
+    Compute water area per district for a given water mask.
+    Returns ee.FeatureCollection with area stats.
+    """
+    def _compute_per_district(feature):
+        geom = feature.geometry()
+        area_km2 = compute_water_area(water_mask, geom)
+        total_area = geom.area().divide(1e6)  # district area in km²
+        return feature.set({
+            "water_area_km2": area_km2,
+            "total_area_km2": total_area,
+            "water_pct": area_km2.divide(total_area).multiply(100),
+        })
+
+    return districts_fc.map(_compute_per_district)
+
+
+def build_district_time_series(start_year, end_year, districts_fc=None):
+    """
+    Build time series of flood stats per district.
+    Returns list of dicts with year and per-district stats.
+    """
+    if districts_fc is None:
+        admin = get_admin_boundaries()
+        districts_fc = admin.filter(
+            ee.Filter.inList("ADM1_NAME", cfg.DISTRICTS)
+        )
+
+    results = []
+    for year in range(start_year, end_year + 1):
+        try:
+            extents = get_annual_water_extents(year)
+            monsoon_stats = compute_district_flood_stats(
+                extents["monsoon_water"], districts_fc
+            )
+            results.append({
+                "year": year,
+                "district_stats": monsoon_stats,
+            })
+        except Exception as e:
+            print(f"  Skipping district stats {year}: {e}")
+    return results
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Flood Duration / Trend Analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_flood_frequency(start_year, end_year, region=None):
+    """
+    For each pixel, compute the fraction of years it was flooded (monsoon water).
+    Returns an image with values 0-1 indicating flood frequency.
+    """
+    if region is None:
+        region = get_study_area()
+
+    count = ee.Image.constant(0)
+    valid = ee.Image.constant(0)
+
+    for year in range(start_year, end_year + 1):
+        try:
+            extents = get_annual_water_extents(year, region)
+            monsoon = extents["monsoon_water"]
+            count = count.add(monsoon)
+            valid = valid.add(ee.Image.constant(1))
+        except Exception:
+            pass
+
+    frequency = count.divide(valid).rename("flood_frequency")
+    return frequency
+
+
+def detect_flood_trend(start_year, end_year, region=None):
+    """
+    Simple trend analysis: compare first-half vs second-half flood frequency.
+    Positive values = increasing flood tendency.
+    """
+    if region is None:
+        region = get_study_area()
+
+    mid = (start_year + end_year) // 2
+    freq_early = compute_flood_frequency(start_year, mid, region)
+    freq_late = compute_flood_frequency(mid + 1, end_year, region)
+    trend = freq_late.subtract(freq_early).rename("flood_trend")
+    return trend
