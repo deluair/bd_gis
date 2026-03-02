@@ -158,11 +158,13 @@ def classify_water_otsu(image, region, scale=30):
     return water_mask
 
 
-def classify_water(image, region=None, scale=30, method="otsu"):
+def classify_water(image, region=None, scale=30, method=None):
     """
     Main entry point for water classification.
-    method: 'otsu' (auto threshold per scene) or 'fixed' (default thresholds)
+    method: 'otsu', 'fixed', or None (auto-select based on cfg.DEFAULT_THRESHOLD_METHOD)
     """
+    if method is None:
+        method = cfg.DEFAULT_THRESHOLD_METHOD
     if method == "otsu" and region is not None:
         return classify_water_otsu(image, region, scale)
     else:

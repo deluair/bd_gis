@@ -24,16 +24,18 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
         region = get_study_area()
 
     # Dry season composite & water classification
+    # Use config default method (fixed for national, otsu for smaller regions)
+    method = cfg.DEFAULT_THRESHOLD_METHOD
     dry_composite = get_seasonal_composite(year, "dry", sensor, region)
     try:
-        dry_water = classify_water(dry_composite, region=region, method="otsu")
+        dry_water = classify_water(dry_composite, region=region, method=method)
     except Exception:
         dry_water = classify_water(dry_composite, region=region, method="fixed")
 
     # Monsoon composite & water classification
     monsoon_composite = get_seasonal_composite(year, "monsoon", sensor, region)
     try:
-        monsoon_water = classify_water(monsoon_composite, region=region, method="otsu")
+        monsoon_water = classify_water(monsoon_composite, region=region, method=method)
     except Exception:
         monsoon_water = classify_water(monsoon_composite, region=region, method="fixed")
 
@@ -63,16 +65,17 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
 # Multi-Year Flood Time Series
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_flood_time_series(start_year, end_year, region=None):
+def build_flood_time_series(start_year, end_year, region=None, step=1):
     """
     Build a time series of seasonal flood extents.
     Returns list of {year, dry_area_km2, monsoon_area_km2, seasonal_area_km2}.
+    step: year interval (1=every year, 2=biennial, 4=every 4 years).
     """
     if region is None:
         region = get_study_area()
 
     results = []
-    for year in range(start_year, end_year + 1):
+    for year in range(start_year, end_year + 1, step):
         try:
             extents = get_annual_water_extents(year, region)
             results.append({

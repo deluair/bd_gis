@@ -40,11 +40,13 @@ DEM_VIS = {"min": 0, "max": 50, "palette": [
 # Interactive Maps
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def create_base_map(center=None, zoom=9):
+def create_base_map(center=None, zoom=None):
     """Create a geemap Map centered on the study area."""
     if center is None:
         b = cfg.STUDY_AREA_BOUNDS
         center = [(b["south"] + b["north"]) / 2, (b["west"] + b["east"]) / 2]
+    if zoom is None:
+        zoom = 7 if cfg.SCOPE == "national" else 9
     m = geemap.Map(center=center, zoom=zoom)
     return m
 
@@ -194,7 +196,7 @@ def plot_flood_time_series(time_series, save_path=None):
 
     ax.set_xlabel("Year", fontsize=12)
     ax.set_ylabel("Water Area (km²)", fontsize=12)
-    ax.set_title("Sylhet Haor Region – Seasonal Water Extent (1985–2025)", fontsize=14)
+    ax.set_title(f"{cfg.scope_label()} – Seasonal Water Extent (1985–2025)", fontsize=14)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
 

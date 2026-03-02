@@ -18,15 +18,21 @@ def ensure_output_dir(subdir=None):
     return path
 
 
+def _default_region():
+    """Get default export region based on scope."""
+    if cfg.SCOPE == "national":
+        from data_acquisition import get_country_boundary
+        return get_country_boundary()
+    b = cfg.STUDY_AREA_BOUNDS
+    return ee.Geometry.Rectangle([b["west"], b["south"], b["east"], b["north"]])
+
+
 def export_geotiff(image, filename, region=None, scale=None, subdir=None):
     """
     Export an ee.Image as a GeoTIFF using geemap.
     """
     if region is None:
-        region = ee.Geometry.Rectangle([
-            cfg.STUDY_AREA_BOUNDS["west"], cfg.STUDY_AREA_BOUNDS["south"],
-            cfg.STUDY_AREA_BOUNDS["east"], cfg.STUDY_AREA_BOUNDS["north"],
-        ])
+        region = _default_region()
     if scale is None:
         scale = cfg.EXPORT_SCALE
 
@@ -52,10 +58,7 @@ def export_to_drive(image, description, folder="bd_gis_exports",
     exceed geemap's direct download limit).
     """
     if region is None:
-        region = ee.Geometry.Rectangle([
-            cfg.STUDY_AREA_BOUNDS["west"], cfg.STUDY_AREA_BOUNDS["south"],
-            cfg.STUDY_AREA_BOUNDS["east"], cfg.STUDY_AREA_BOUNDS["north"],
-        ])
+        region = _default_region()
     if scale is None:
         scale = cfg.EXPORT_SCALE
 

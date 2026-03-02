@@ -28,7 +28,16 @@ OUT = cfg.OUTPUT_DIR
 os.makedirs(os.path.join(OUT, "report_maps"), exist_ok=True)
 
 REGION = get_study_area()
-DIMS = 1024  # thumbnail resolution
+DIMS = 2048 if cfg.SCOPE == "national" else 1024
+TITLE_PREFIX = cfg.scope_label()
+
+
+def get_plot_extent():
+    b = cfg.STUDY_AREA_BOUNDS
+    return [b["west"], b["east"], b["south"], b["north"]]
+
+
+EXTENT = get_plot_extent()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,10 +74,10 @@ def map_study_area():
     ]})
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr, extent=EXTENT, aspect="auto")
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("Sylhet Haor Wetlands – Study Area Elevation (SRTM)", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – Study Area Elevation (SRTM)", fontsize=13)
 
     # Mark haors
     for name, h in cfg.HAORS.items():
@@ -105,10 +114,10 @@ def map_seasonal_comparison():
     })
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr, extent=EXTENT, aspect="auto")
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("Seasonal Water Extent – 2020", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – Seasonal Water Extent 2020", fontsize=13)
 
     legend_patches = [
         mpatches.Patch(color="#e8e8e8", label="Land"),
@@ -135,10 +144,10 @@ def map_jrc_occurrence():
     })
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr, extent=EXTENT, aspect="auto")
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("JRC Global Surface Water – Occurrence (1984–2021)", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – JRC Water Occurrence (1984–2021)", fontsize=13)
 
     sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=plt.Normalize(0, 100))
     sm.set_array([])
@@ -160,10 +169,10 @@ def map_water_persistence():
     })
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr, extent=EXTENT, aspect="auto")
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("Water Persistence Classification (1985–2025)", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – Water Persistence (1985–2025)", fontsize=13)
 
     legend_patches = [
         mpatches.Patch(color="#ffeda0", label="Rare (<25% of time)"),
@@ -195,7 +204,7 @@ def map_extreme_floods():
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     for ax, arr, year in [(ax1, arr_1988, 1988), (ax2, arr_2004, 2004)]:
-        ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+        ax.imshow(arr, extent=EXTENT, aspect="auto")
         ax.set_xlabel("Longitude (°E)", fontsize=10)
         ax.set_ylabel("Latitude (°N)", fontsize=10)
         ax.set_title(f"Monsoon Flood Extent – {year}", fontsize=12)
@@ -226,10 +235,10 @@ def map_decadal_change():
     })
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr, extent=EXTENT, aspect="auto")
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("Water Occurrence Change: 1985–1999 vs 2010–2025", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – Water Change: 1985–1999 vs 2010–2025", fontsize=13)
 
     sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn, norm=plt.Normalize(-50, 50))
     sm.set_array([])
@@ -258,7 +267,7 @@ def map_river_corridors():
     })
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(arr_bg, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(arr_bg, extent=EXTENT, aspect="auto")
     # Overlay water (transparent where white)
     water_rgba = arr_water.copy().astype(float) / 255.0
     mask = (arr_water[:, :, :3].sum(axis=2) < 600)  # non-white pixels
@@ -267,7 +276,7 @@ def map_river_corridors():
     water_overlay[mask, 1] = 0.4
     water_overlay[mask, 2] = 1.0
     water_overlay[mask, 3] = 0.7
-    ax.imshow(water_overlay, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+    ax.imshow(water_overlay, extent=EXTENT, aspect="auto")
 
     # Mark rivers
     for name, r in cfg.RIVERS.items():
@@ -280,7 +289,7 @@ def map_river_corridors():
 
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)
-    ax.set_title("River Network & Monsoon Water Extent (2020)", fontsize=13)
+    ax.set_title(f"{TITLE_PREFIX} – River Network & Monsoon Water (2020)", fontsize=13)
 
     legend_patches = [
         mpatches.Patch(color="#0066ff", label="Water (monsoon 2020)"),
@@ -306,7 +315,7 @@ def map_multiyear():
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     for ax, (year, arr) in zip(axes, arrs.items()):
-        ax.imshow(arr, extent=[90.5, 92.2, 24.0, 25.2], aspect="auto")
+        ax.imshow(arr, extent=EXTENT, aspect="auto")
         ax.set_xlabel("Longitude (°E)", fontsize=10)
         ax.set_ylabel("Latitude (°N)", fontsize=10)
         ax.set_title(f"Monsoon Water – {year}", fontsize=12)

@@ -20,10 +20,44 @@ def init_gee():
     print("GEE initialized successfully.")
 
 
+def get_country_boundary():
+    """Return Bangladesh country boundary from FAO GAUL Level 0."""
+    return (
+        ee.FeatureCollection(cfg.COUNTRY_BOUNDARY_DATASET)
+        .filter(ee.Filter.eq("ADM0_NAME", cfg.COUNTRY_NAME))
+        .geometry()
+    )
+
+
+def get_division_boundary(division_name):
+    """Return a division boundary from FAO GAUL Level 1."""
+    return (
+        ee.FeatureCollection(cfg.ADMIN_L1)
+        .filter(ee.Filter.eq("ADM0_NAME", cfg.COUNTRY_NAME))
+        .filter(ee.Filter.eq("ADM1_NAME", division_name))
+        .geometry()
+    )
+
+
+def get_division_boundaries_all():
+    """Return all division boundaries as a FeatureCollection."""
+    return (
+        ee.FeatureCollection(cfg.ADMIN_L1)
+        .filter(ee.Filter.eq("ADM0_NAME", cfg.COUNTRY_NAME))
+    )
+
+
 def get_study_area():
-    """Return ee.Geometry.Rectangle for the study area."""
-    b = cfg.STUDY_AREA_BOUNDS
-    return ee.Geometry.Rectangle([b["west"], b["south"], b["east"], b["north"]])
+    """Return ee.Geometry for the active study area based on scope."""
+    if cfg.SCOPE == "national":
+        return get_country_boundary()
+    elif cfg.SCOPE in cfg.DIVISIONS:
+        # Try to load division boundary; capitalize first letter
+        div_name = cfg.SCOPE.title()
+        return get_division_boundary(div_name)
+    else:
+        b = cfg.STUDY_AREA_BOUNDS
+        return ee.Geometry.Rectangle([b["west"], b["south"], b["east"], b["north"]])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -218,4 +252,7 @@ def get_district_boundaries(district_names=None):
     if district_names is None:
         district_names = cfg.DISTRICTS
     admin = get_admin_boundaries()
+    if district_names is None:
+        # National scope: return all districts
+        return admin
     return admin.filter(ee.Filter.inList("ADM1_NAME", district_names))

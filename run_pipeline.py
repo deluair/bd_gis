@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Main orchestrator for Sylhet Haor Wetlands Geospatial Analysis Pipeline.
+Main orchestrator for Bangladesh Geospatial Analysis Pipeline.
 
 Usage:
-    python run_pipeline.py --test       # Quick test: GEE auth + 2020 dry/monsoon composite
-    python run_pipeline.py --full       # Full 40-year analysis (takes hours)
-    python run_pipeline.py --rivers     # River erosion analysis only
-    python run_pipeline.py --floods     # Flood extent analysis only
-    python run_pipeline.py --changes    # Water change detection only
-    python run_pipeline.py --haors      # Haor-specific analysis only
-    python run_pipeline.py --viz        # Visualization/export only (requires prior runs)
+    python run_pipeline.py --test                       # Quick test (default scope)
+    python run_pipeline.py --scope national --test      # National scope test
+    python run_pipeline.py --scope national --full      # Full national analysis
+    python run_pipeline.py --scope sylhet --full        # Original Sylhet analysis
+    python run_pipeline.py --rivers                     # River erosion analysis only
+    python run_pipeline.py --floods                     # Flood extent analysis only
+    python run_pipeline.py --changes                    # Water change detection only
+    python run_pipeline.py --haors                      # Haor/wetland analysis only
 """
 import argparse
 import os
@@ -23,13 +24,22 @@ sys.path.insert(0, os.path.dirname(__file__))
 import config as cfg
 
 
-def _resolve_ee(val):
+def _resolve_ee(val, timeout=300):
     """Resolve ee.Number/ComputedObject to Python float, or return as-is."""
+    import signal
     if isinstance(val, (ee.Number, ee.ComputedObject)):
+        def _handler(signum, frame):
+            raise TimeoutError("GEE getInfo() timed out")
+        old = signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(timeout)
         try:
-            return val.getInfo()
+            result = val.getInfo()
         except Exception:
-            return None
+            result = None
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
+        return result
     return val
 
 
@@ -54,8 +64,9 @@ from visualization import (
 
 def run_test():
     """Quick pipeline test: authenticate, pull composites, classify water."""
+    label = cfg.scope_label()
     print("=" * 60)
-    print("PIPELINE TEST – Sylhet Haor 2020 Dry vs Monsoon")
+    print(f"PIPELINE TEST – {label} 2020 Dry vs Monsoon")
     print("=" * 60)
 
     init_gee()
@@ -72,9 +83,9 @@ def run_test():
     print("  Monsoon composite bands:", monsoon_composite.bandNames().getInfo())
 
     # ── Water Classification ─────────────────────────────────────────────
-    print("\n[3/5] Classifying water (Otsu + majority voting)...")
-    dry_water = classify_water(dry_composite, region=region, method="otsu")
-    monsoon_water = classify_water(monsoon_composite, region=region, method="otsu")
+    print(f"\n[3/5] Classifying water (method: {cfg.DEFAULT_THRESHOLD_METHOD})...")
+    dry_water = classify_water(dry_composite, region=region)
+    monsoon_water = classify_water(monsoon_composite, region=region)
 
     dry_area = compute_water_area(dry_water, region).getInfo()
     monsoon_area = compute_water_area(monsoon_water, region).getInfo()
@@ -89,8 +100,8 @@ def run_test():
     jrc_stats = jrc_occ.reduceRegion(
         reducer=ee.Reducer.mean(),
         geometry=region,
-        scale=30,
-        maxPixels=1e9,
+        scale=300 if cfg.SCOPE == "national" else 30,
+        maxPixels=cfg.MAX_PIXELS,
         bestEffort=True,
     ).getInfo()
     print(f"  JRC mean water occurrence: {jrc_stats.get('occurrence', 'N/A')}%")
@@ -99,7 +110,6 @@ def run_test():
     print("\n[5/5] Creating interactive map...")
     m = create_water_comparison_map(dry_water, monsoon_water, 2020)
 
-    # Add DEM and JRC layers
     dem = get_srtm_dem()
     m.addLayer(dem, {"min": 0, "max": 50, "palette": [
         "006837", "1a9850", "66bd63", "d9ef8b", "fee08b", "fdae61", "d73027"
@@ -112,13 +122,21 @@ def run_test():
     map_path = save_map(m, "test_2020_dry_vs_monsoon.html")
 
     # ── Export Test GeoTIFF ──────────────────────────────────────────────
-    print("\nExporting test GeoTIFFs to Drive (local download may be slow)...")
+    print("\nExporting test GeoTIFFs to Drive...")
     export_to_drive(dry_water, "test_dry_water_2020", region=region)
     export_to_drive(monsoon_water, "test_monsoon_water_2020", region=region)
 
-    # ── Summary ──────────────────────────────────────────────────────────
+    # ── Summary CSV ──────────────────────────────────────────────────────
+    export_csv(
+        [{"metric": "dry_area_km2", "value": dry_area},
+         {"metric": "monsoon_area_km2", "value": monsoon_area},
+         {"metric": "seasonal_inundation_km2", "value": monsoon_area - dry_area}],
+        "summary_water_stats_2020.csv",
+    )
+
     print("\n" + "=" * 60)
     print("TEST COMPLETE")
+    print(f"  Scope:        {label}")
     print(f"  Map saved:    {map_path}")
     print(f"  Dry area:     {dry_area:.1f} km²")
     print(f"  Monsoon area: {monsoon_area:.1f} km²")
@@ -130,15 +148,32 @@ def run_rivers():
     from river_analysis import run_river_analysis
 
     print("\n" + "=" * 60)
-    print("RIVER EROSION & CHANNEL MIGRATION ANALYSIS")
+    print(f"RIVER EROSION & CHANNEL MIGRATION – {cfg.scope_label()}")
+    print(f"  Analyzing {len(cfg.RIVERS)} rivers")
     print("=" * 60)
 
     init_gee()
     ensure_output_dir("rivers")
 
-    for river_name in ["Surma", "Kushiyara"]:
+    import signal
+
+    def _river_timeout_handler(signum, frame):
+        raise TimeoutError("River analysis timed out")
+
+    for river_name in cfg.RIVERS:
         print(f"\n── {river_name} River ──")
-        results = run_river_analysis(river_name)
+        old_handler = signal.signal(signal.SIGALRM, _river_timeout_handler)
+        signal.alarm(600)  # 10 min max per river
+        try:
+            results = run_river_analysis(river_name)
+        except Exception as e:
+            print(f"  FAILED: {e}")
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+            continue
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
         # Export centerlines
         for year, cl in results["centerlines"].items():
@@ -155,7 +190,7 @@ def run_rivers():
             region=results["roi"],
         )
 
-        # Erosion rates CSV – resolve ee.Number to Python float
+        # Erosion rates CSV
         rates_resolved = []
         for r in results["erosion_rates"]:
             rate_val = _resolve_ee(r["rate_ha_per_year"])
@@ -192,26 +227,26 @@ def run_floods():
     from flood_analysis import (
         build_flood_time_series, analyze_extreme_flood,
         compute_flood_frequency, detect_flood_trend,
+        get_annual_water_extents,
     )
 
     print("\n" + "=" * 60)
-    print("FLOOD EXTENT MAPPING")
+    print(f"FLOOD EXTENT MAPPING – {cfg.scope_label()}")
     print("=" * 60)
 
     init_gee()
     region = get_study_area()
     ensure_output_dir("floods")
 
-    # Build time series (every 2 years for speed, full for production)
-    print("\nBuilding flood time series (sampling every 2 years)...")
-    sample_years = list(range(1986, 2025, 2))
+    # Sampling interval: national=4 years, sylhet=2 years
+    step = 4 if cfg.SCOPE == "national" else 2
+    print(f"\nBuilding flood time series (every {step} years)...")
+    sample_years = list(range(1988, 2025, step))
     time_series = []
     for year in sample_years:
         print(f"  Processing {year}...")
         try:
-            from flood_analysis import get_annual_water_extents
             extents = get_annual_water_extents(year, region)
-            # Resolve ee.Number to Python float for matplotlib/pandas
             dry_val = _resolve_ee(extents["dry_area_km2"])
             monsoon_val = _resolve_ee(extents["monsoon_area_km2"])
             seasonal_val = _resolve_ee(extents["seasonal_area_km2"])
@@ -234,8 +269,6 @@ def run_floods():
             time_series,
             os.path.join(cfg.OUTPUT_DIR, "floods", "flood_time_series.png"),
         )
-    else:
-        print("  No time series data to plot.")
 
     # Extreme flood years
     print("\nAnalyzing extreme flood years...")
@@ -253,13 +286,19 @@ def run_floods():
 
     # Flood frequency map
     print("\nComputing flood frequency (2000-2024)...")
-    freq = compute_flood_frequency(2000, 2024, region)
-    export_to_drive(freq, "flood_frequency_2000_2024", region=region)
+    try:
+        freq = compute_flood_frequency(2000, 2024, region)
+        export_to_drive(freq, "flood_frequency_2000_2024", region=region)
+    except Exception as e:
+        print(f"  Flood frequency skipped: {e}")
 
     # Flood trend
     print("Computing flood trend...")
-    trend = detect_flood_trend(1990, 2024, region)
-    export_to_drive(trend, "flood_trend_1990_2024", region=region)
+    try:
+        trend = detect_flood_trend(1990, 2024, region)
+        export_to_drive(trend, "flood_trend_1990_2024", region=region)
+    except Exception as e:
+        print(f"  Flood trend skipped: {e}")
 
     print("\nFlood analysis complete.")
 
@@ -274,22 +313,37 @@ def run_changes():
     )
 
     print("\n" + "=" * 60)
-    print("WATER BODY CHANGE DETECTION")
+    print(f"WATER BODY CHANGE DETECTION – {cfg.scope_label()}")
     print("=" * 60)
 
     init_gee()
     region = get_study_area()
     ensure_output_dir("changes")
 
-    # Full-period water occurrence
-    print("\nComputing 40-year water occurrence (sampled)...")
-    occurrence = compute_water_occurrence(1985, 2025, region)
+    # For national scope, use tiled processing
+    if cfg.SCOPE == "national":
+        from tiling import run_tiled, merge_image_tiles
+        print("\nComputing water occurrence (tiled by division)...")
+        occurrence = run_tiled(
+            compute_water_occurrence,
+            region_arg_name="region",
+            merge_func=merge_image_tiles,
+            start_year=1985, end_year=2025,
+        )
+    else:
+        print("\nComputing 40-year water occurrence...")
+        occurrence = compute_water_occurrence(1985, 2025, region)
+
+    if occurrence is None:
+        print("  ERROR: water occurrence computation returned None")
+        return
+
     persistence = classify_water_persistence(occurrence)
 
     export_to_drive(occurrence, "water_occurrence_1985_2025", region=region)
     export_to_drive(persistence, "water_persistence_1985_2025", region=region)
 
-    # Persistence area stats -- resolve ee.Number to Python float
+    # Persistence area stats
     stats = compute_area_stats(persistence, region)
     stats_resolved = {k: _resolve_ee(v) for k, v in stats.items()}
     export_csv(
@@ -299,24 +353,27 @@ def run_changes():
 
     # Decade-wise changes
     print("\nComputing decade-wise changes...")
-    result = compute_all_decade_changes(region)
+    try:
+        result = compute_all_decade_changes(region)
 
-    for change_info in result["changes"]:
-        period_tag = change_info["period"].replace(" → ", "_to_")
-        export_to_drive(
-            change_info["change"],
-            f"water_change_{period_tag}",
-            region=region,
-        )
+        for change_info in result["changes"]:
+            period_tag = change_info["period"].replace(" → ", "_to_")
+            export_to_drive(
+                change_info["change"],
+                f"water_change_{period_tag}",
+                region=region,
+            )
 
-    # Water-to-land conversion (1985-1994 vs 2015-2025)
-    print("\nDetecting water-to-land conversions...")
-    early_occ = result["decade_occurrences"]["1985-1994"]
-    late_occ = result["decade_occurrences"]["2015-2025"]
-    w2l = detect_water_to_land(early_occ, late_occ)
-    l2w = detect_land_to_water(early_occ, late_occ)
-    export_to_drive(w2l.toFloat(), "water_to_land_conversion", region=region)
-    export_to_drive(l2w.toFloat(), "land_to_water_conversion", region=region)
+        # Water-to-land conversion
+        print("\nDetecting water-to-land conversions...")
+        early_occ = result["decade_occurrences"]["1985-1994"]
+        late_occ = result["decade_occurrences"]["2015-2025"]
+        w2l = detect_water_to_land(early_occ, late_occ)
+        l2w = detect_land_to_water(early_occ, late_occ)
+        export_to_drive(w2l.toFloat(), "water_to_land_conversion", region=region)
+        export_to_drive(l2w.toFloat(), "land_to_water_conversion", region=region)
+    except Exception as e:
+        print(f"  Decade changes failed: {e}")
 
     # JRC validation
     print("\nValidating against JRC Global Surface Water...")
@@ -325,50 +382,44 @@ def run_changes():
         corr_info = corr.getInfo()
         print(f"  Correlation with JRC: {corr_info}")
     except Exception as e:
-        print(f"  JRC validation skipped (error: {e})")
+        print(f"  JRC validation skipped: {e}")
 
     # Interactive map
-    m = create_base_map()
-    add_occurrence_layer(m, occurrence, "Our Water Occurrence")
-    add_persistence_layer(m, persistence, "Water Persistence")
-    jrc_occ = get_jrc_occurrence(region)
-    m.addLayer(jrc_occ.divide(100), {
-        "min": 0, "max": 1,
-        "palette": ["ffffff", "d4e7f7", "89c4e8", "3e8ec4", "1a5fa4", "08306b"],
-    }, "JRC Occurrence", shown=False)
-    m.addLayerControl()
-    save_map(m, "water_change_map.html", "changes")
-
-    # Side-by-side change figure
     try:
-        create_change_figure(
-            early_occ, late_occ,
-            "1985-1994 Occurrence", "2015-2025 Occurrence",
-            region,
-            os.path.join(cfg.OUTPUT_DIR, "changes", "change_1985_vs_2025.png"),
-        )
+        m = create_base_map()
+        add_occurrence_layer(m, occurrence, "Our Water Occurrence")
+        add_persistence_layer(m, persistence, "Water Persistence")
+        jrc_occ = get_jrc_occurrence(region)
+        m.addLayer(jrc_occ.divide(100), {
+            "min": 0, "max": 1,
+            "palette": ["ffffff", "d4e7f7", "89c4e8", "3e8ec4", "1a5fa4", "08306b"],
+        }, "JRC Occurrence", shown=False)
+        m.addLayerControl()
+        save_map(m, "water_change_map.html", "changes")
     except Exception as e:
-        print(f"  Change figure generation skipped (error: {e})")
+        print(f"  Map generation skipped: {e}")
 
     print("\nWater change analysis complete.")
 
 
 def run_haors():
-    """Haor-specific analysis."""
+    """Haor/wetland-specific analysis."""
     from haor_analysis import (
         delineate_all_haors, compute_all_haor_timeseries,
         compare_all_haors,
     )
 
+    wetland_label = "Wetland" if cfg.SCOPE == "national" else "Haor"
     print("\n" + "=" * 60)
-    print("HAOR-SPECIFIC ANALYSIS")
+    print(f"{wetland_label.upper()} ANALYSIS – {cfg.scope_label()}")
+    print(f"  Analyzing {len(cfg.HAORS)} {wetland_label.lower()}s")
     print("=" * 60)
 
     init_gee()
     ensure_output_dir("haors")
 
-    # Delineate haor boundaries
-    print("\nDelineating haor boundaries...")
+    # Delineate boundaries
+    print(f"\nDelineating {wetland_label.lower()} boundaries...")
     boundaries = delineate_all_haors()
     for name, boundary in boundaries.items():
         export_to_drive(
@@ -376,18 +427,22 @@ def run_haors():
             f"{name.replace(' ', '_').lower()}_boundary",
         )
 
-    # Haor map
-    dem = get_srtm_dem()
-    m = create_haor_map(boundaries, dem)
-    save_map(m, "haor_boundaries_map.html", "haors")
+    # Map
+    try:
+        dem = get_srtm_dem()
+        m = create_haor_map(boundaries, dem)
+        save_map(m, "haor_boundaries_map.html", "haors")
+    except Exception as e:
+        print(f"  Map generation skipped: {e}")
 
-    # Area time series (sampled for speed)
-    print("\nComputing haor area time series (1990–2024, every 3 years)...")
+    # Area time series (sampled)
+    step = 5 if cfg.SCOPE == "national" else 3
+    print(f"\nComputing area time series (1990-2024, every {step} years)...")
     haor_series = {}
     for name in cfg.HAORS:
         print(f"  {name}...")
         series = []
-        for year in range(1990, 2025, 3):
+        for year in range(1990, 2025, step):
             try:
                 from haor_analysis import compute_haor_area_timeseries
                 ts = compute_haor_area_timeseries(name, year, year, "monsoon")
@@ -397,11 +452,10 @@ def run_haors():
                 print(f"    Skipped {year}: {e}")
         haor_series[name] = series
 
-    # Resolve ee.Number values to Python floats for CSV and plotting
+    # Resolve ee.Number values
     for name in haor_series:
         for entry in haor_series[name]:
             entry["area_km2"] = _resolve_ee(entry["area_km2"])
-        # Filter out entries where resolution failed
         haor_series[name] = [e for e in haor_series[name] if e["area_km2"] is not None]
 
     # Export CSVs
@@ -413,44 +467,50 @@ def run_haors():
         )
 
     # Area trend plot
-    plot_haor_area_trends(
-        haor_series,
-        os.path.join(cfg.OUTPUT_DIR, "haors", "haor_area_trends.png"),
-    )
+    try:
+        plot_haor_area_trends(
+            haor_series,
+            os.path.join(cfg.OUTPUT_DIR, "haors", "haor_area_trends.png"),
+        )
+    except Exception as e:
+        print(f"  Area trend plot skipped: {e}")
 
     # Pre-2000 vs Post-2000 comparison
     print("\nComparing pre-2000 vs post-2000...")
-    comparisons = compare_all_haors()
-    comp_csv = []
-    for name, comp in comparisons.items():
-        comp_csv.append({
-            "haor": name,
-            "period1_avg_km2": comp["period1_avg_km2"],
-            "period2_avg_km2": comp["period2_avg_km2"],
-            "change_km2": comp["change_km2"],
-            "change_pct": comp["change_pct"],
-        })
-    export_csv(comp_csv, "haor_period_comparison.csv", "haors")
+    try:
+        comparisons = compare_all_haors()
+        comp_csv = []
+        for name, comp in comparisons.items():
+            comp_csv.append({
+                "haor": name,
+                "period1_avg_km2": comp["period1_avg_km2"],
+                "period2_avg_km2": comp["period2_avg_km2"],
+                "change_km2": comp["change_km2"],
+                "change_pct": comp["change_pct"],
+            })
+        export_csv(comp_csv, "haor_period_comparison.csv", "haors")
 
-    # Comparison plot
-    comp_resolved = {}
-    for name, comp in comparisons.items():
-        comp_resolved[name] = {
-            "period1_avg_km2": _resolve_ee(comp["period1_avg_km2"]),
-            "period2_avg_km2": _resolve_ee(comp["period2_avg_km2"]),
-        }
-    plot_period_comparison(
-        comp_resolved,
-        os.path.join(cfg.OUTPUT_DIR, "haors", "haor_period_comparison.png"),
-    )
+        comp_resolved = {}
+        for name, comp in comparisons.items():
+            comp_resolved[name] = {
+                "period1_avg_km2": _resolve_ee(comp["period1_avg_km2"]),
+                "period2_avg_km2": _resolve_ee(comp["period2_avg_km2"]),
+            }
+        plot_period_comparison(
+            comp_resolved,
+            os.path.join(cfg.OUTPUT_DIR, "haors", "haor_period_comparison.png"),
+        )
+    except Exception as e:
+        print(f"  Period comparison skipped: {e}")
 
-    print("\nHaor analysis complete.")
+    print(f"\n{wetland_label} analysis complete.")
 
 
 def run_full():
     """Run the complete pipeline."""
+    label = cfg.scope_label()
     print("\n" + "=" * 60)
-    print("FULL PIPELINE – Sylhet Haor Wetlands (1985–2025)")
+    print(f"FULL PIPELINE – {label} (1985–2025)")
     print("=" * 60)
 
     start = time.time()
@@ -463,21 +523,33 @@ def run_full():
     elapsed = (time.time() - start) / 60
     print(f"\n{'=' * 60}")
     print(f"FULL PIPELINE COMPLETE – {elapsed:.1f} minutes")
-    print(f"All outputs saved to: {cfg.OUTPUT_DIR}")
+    print(f"  Scope: {label}")
+    print(f"  All outputs saved to: {cfg.OUTPUT_DIR}")
     print("=" * 60)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sylhet Haor Wetlands Geospatial Analysis Pipeline"
+        description="Bangladesh Geospatial Analysis Pipeline"
     )
+    parser.add_argument("--scope", default=None,
+        choices=["sylhet", "national", "barishal", "chattogram", "dhaka",
+                 "khulna", "mymensingh", "rajshahi", "rangpur"],
+        help="Processing scope (default: from config)")
     parser.add_argument("--test", action="store_true", help="Quick test run")
-    parser.add_argument("--full", action="store_true", help="Full 40-year analysis")
+    parser.add_argument("--full", action="store_true", help="Full analysis")
     parser.add_argument("--rivers", action="store_true", help="River analysis only")
     parser.add_argument("--floods", action="store_true", help="Flood analysis only")
     parser.add_argument("--changes", action="store_true", help="Water change detection only")
-    parser.add_argument("--haors", action="store_true", help="Haor analysis only")
+    parser.add_argument("--haors", action="store_true", help="Haor/wetland analysis only")
     args = parser.parse_args()
+
+    # Set scope if provided via CLI
+    if args.scope:
+        cfg.set_scope(args.scope)
+
+    print(f"Scope: {cfg.scope_label()} | Threshold: {cfg.DEFAULT_THRESHOLD_METHOD} | "
+          f"Rivers: {len(cfg.RIVERS)} | Wetlands: {len(cfg.HAORS)}")
 
     if args.full:
         run_full()
@@ -491,7 +563,6 @@ def main():
     elif args.haors:
         run_haors()
     else:
-        # Default to test
         run_test()
 
 

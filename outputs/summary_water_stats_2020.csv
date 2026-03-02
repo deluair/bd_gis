@@ -1,2 +1,4 @@
-region,year,dry_season_water_km2,monsoon_water_km2,seasonal_inundation_km2
-Sylhet Study Area,2020,695.0,2615.7,1920.7
+metric,value
+dry_area_km2,10322.171804287507
+monsoon_area_km2,18484.831389827228
+seasonal_inundation_km2,8162.659585539721

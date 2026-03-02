@@ -2,8 +2,32 @@
 River erosion and channel migration analysis – extract centerlines,
 compute lateral migration, and identify erosion hotspots.
 """
+import signal
 import ee
 import config as cfg
+
+# Timeout for individual GEE getInfo() calls (seconds)
+GEE_TIMEOUT = 300  # 5 minutes
+
+
+class GEETimeoutError(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise GEETimeoutError("GEE call timed out")
+
+
+def _getinfo_with_timeout(ee_obj, timeout=GEE_TIMEOUT):
+    """Call getInfo() with a timeout to prevent indefinite hangs."""
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout)
+    try:
+        result = ee_obj.getInfo()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+    return result
 from data_acquisition import (
     get_study_area, get_landsat_collection, make_composite
 )
@@ -41,7 +65,7 @@ def get_decadal_water_mask(year, river_roi, window=2):
     col = get_landsat_collection(start, end, river_roi)
 
     # Guard against empty collections (e.g. for very recent years)
-    col_size = col.size().getInfo()
+    col_size = _getinfo_with_timeout(col.size())
     if col_size == 0:
         # Fall back to a wider window
         start = f"{year - window - 2}-12-01"
