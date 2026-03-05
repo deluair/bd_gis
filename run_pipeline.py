@@ -5,12 +5,27 @@ Main orchestrator for Bangladesh Geospatial Analysis Pipeline.
 Usage:
     python run_pipeline.py --test                       # Quick test (default scope)
     python run_pipeline.py --scope national --test      # National scope test
-    python run_pipeline.py --scope national --full      # Full national analysis
+    python run_pipeline.py --scope national --full      # Full water analysis pipeline
     python run_pipeline.py --scope sylhet --full        # Original Sylhet analysis
     python run_pipeline.py --rivers                     # River erosion analysis only
     python run_pipeline.py --floods                     # Flood extent analysis only
     python run_pipeline.py --changes                    # Water change detection only
     python run_pipeline.py --haors                      # Haor/wetland analysis only
+    python run_pipeline.py --nightlights                # Nighttime lights analysis
+    python run_pipeline.py --urbanization               # Urbanization & built-up analysis
+    python run_pipeline.py --vegetation                 # Vegetation & agriculture analysis
+    python run_pipeline.py --landcover                  # Land cover / LULC analysis
+    python run_pipeline.py --airquality                 # Air quality (Sentinel-5P) analysis
+    python run_pipeline.py --climate                    # Climate (rainfall, LST, drought)
+    python run_pipeline.py --poverty                    # Poverty proxy mapping
+    python run_pipeline.py --infrastructure             # Infrastructure & construction
+    python run_pipeline.py --crops                      # Crop detection & rice phenology
+    python run_pipeline.py --slums                      # Slum/informal settlement mapping
+    python run_pipeline.py --coastal                    # Coastal & mangrove analysis
+    python run_pipeline.py --soil                       # Soil properties & erosion risk
+    python run_pipeline.py --health                     # Health risk proxy mapping
+    python run_pipeline.py --energy                     # Renewable energy potential
+    python run_pipeline.py --full-extended              # ALL modules (water + extended)
 """
 import argparse
 import os
@@ -50,7 +65,7 @@ from data_acquisition import (
 from water_classification import classify_water, compute_water_area
 from export_utils import (
     ensure_output_dir, export_geotiff, export_csv,
-    export_to_drive, export_shapefile
+    export_to_drive, export_shapefile, export_fc_to_csv
 )
 from visualization import (
     create_base_map, add_water_layer, add_occurrence_layer,
@@ -61,6 +76,10 @@ from visualization import (
     plot_erosion_rates, plot_period_comparison, create_change_figure,
 )
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Original Water Analysis Modules
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def run_test():
     """Quick pipeline test: authenticate, pull composites, classify water."""
@@ -506,11 +525,1101 @@ def run_haors():
     print(f"\n{wetland_label} analysis complete.")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Extended Analysis Modules
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_nightlights():
+    """Nighttime lights and electrification analysis."""
+    from nightlights import run_nightlights_analysis
+
+    print("\n" + "=" * 60)
+    print(f"NIGHTTIME LIGHTS ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("nightlights")
+
+    results = run_nightlights_analysis(region)
+
+    # Export time series
+    if results.get("time_series"):
+        ts_resolved = []
+        for entry in results["time_series"]:
+            ts_resolved.append({
+                "year": entry["year"],
+                "mean_radiance": _resolve_ee(entry.get("mean_radiance")),
+                "max_radiance": _resolve_ee(entry.get("max_radiance")),
+                "sum_radiance": _resolve_ee(entry.get("sum_radiance")),
+            })
+        export_csv(ts_resolved, "nightlights_timeseries.csv", "nightlights")
+
+    # Export electrification stats
+    for year, elec in results.get("electrification", {}).items():
+        lit_area = _resolve_ee(elec.get("lit_area_km2"))
+        if lit_area is not None:
+            export_csv(
+                [{"year": year, "lit_area_km2": lit_area}],
+                f"electrification_{year}.csv", "nightlights",
+            )
+        try:
+            export_to_drive(
+                elec["mask"].toFloat(), f"electrification_mask_{year}", region=region
+            )
+        except Exception as e:
+            print(f"  Export electrification {year} skipped: {e}")
+
+    # Export change maps
+    for period, change_img in results.get("changes", {}).items():
+        try:
+            export_to_drive(change_img.toFloat(), f"light_change_{period}", region=region)
+        except Exception as e:
+            print(f"  Export light change {period} skipped: {e}")
+
+    # Export city stats
+    for year, cities in results.get("city_stats", {}).items():
+        city_resolved = []
+        for c in cities:
+            city_resolved.append({
+                "city": c.get("city", ""),
+                "mean_radiance": _resolve_ee(c.get("mean_radiance")),
+                "max_radiance": _resolve_ee(c.get("max_radiance")),
+            })
+        export_csv(city_resolved, f"city_lights_{year}.csv", "nightlights")
+
+    print("\nNighttime lights analysis complete.")
+
+
+def run_urbanization():
+    """Urbanization and built-up area analysis."""
+    from urbanization import run_urbanization_analysis
+
+    print("\n" + "=" * 60)
+    print(f"URBANIZATION ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("urbanization")
+
+    results = run_urbanization_analysis(region)
+
+    # Export built-up time series
+    if results.get("builtup_timeseries"):
+        ts_resolved = []
+        for entry in results["builtup_timeseries"]:
+            ts_resolved.append({
+                "year": entry["year"],
+                "built_area_km2": _resolve_ee(entry.get("built_area_km2")),
+            })
+        export_csv(ts_resolved, "builtup_timeseries.csv", "urbanization")
+
+    # Export urbanization rates
+    if results.get("urbanization_rates"):
+        rates_resolved = []
+        for entry in results["urbanization_rates"]:
+            rates_resolved.append({
+                "period": entry["period"],
+                "total_change_km2": _resolve_ee(entry.get("total_change_km2")),
+                "annual_rate_km2": _resolve_ee(entry.get("annual_rate_km2")),
+            })
+        export_csv(rates_resolved, "urbanization_rates.csv", "urbanization")
+
+    # Export expansion maps
+    expansion = results.get("expansion_1990_2020")
+    if expansion:
+        try:
+            export_to_drive(
+                expansion["new_urban"].toFloat(),
+                "urban_expansion_1990_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export expansion skipped: {e}")
+
+    # Export settlement classification
+    if results.get("settlement_2020"):
+        sett_resolved = []
+        for entry in results["settlement_2020"]:
+            sett_resolved.append({
+                "class_name": entry["class_name"],
+                "area_km2": _resolve_ee(entry.get("area_km2")),
+            })
+        export_csv(sett_resolved, "settlement_classification_2020.csv", "urbanization")
+
+    # Export city growth
+    for city, growth in results.get("city_growth", {}).items():
+        growth_resolved = []
+        for entry in growth:
+            growth_resolved.append({
+                "year": entry["year"],
+                "built_area_km2": _resolve_ee(entry.get("built_area_km2")),
+            })
+        city_slug = city.lower().replace(" ", "_")
+        export_csv(growth_resolved, f"{city_slug}_growth.csv", "urbanization")
+
+    print("\nUrbanization analysis complete.")
+
+
+def run_vegetation():
+    """Vegetation, agriculture, and forest analysis."""
+    from vegetation import run_vegetation_analysis
+
+    print("\n" + "=" * 60)
+    print(f"VEGETATION & AGRICULTURE ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("vegetation")
+
+    results = run_vegetation_analysis(region)
+
+    # Export NDVI time series
+    if results.get("ndvi_timeseries"):
+        ts_resolved = []
+        for entry in results["ndvi_timeseries"]:
+            ts_resolved.append({
+                "year": entry["year"],
+                "mean_ndvi": _resolve_ee(entry.get("mean_ndvi")),
+                "max_ndvi": _resolve_ee(entry.get("max_ndvi")),
+            })
+        export_csv(ts_resolved, "ndvi_timeseries.csv", "vegetation")
+
+    # Export seasonal NDVI
+    if results.get("seasonal_ndvi"):
+        seasonal_resolved = []
+        for entry in results["seasonal_ndvi"]:
+            resolved = {"year": entry["year"]}
+            for key in ["pre_monsoon_ndvi", "monsoon_ndvi", "post_monsoon_ndvi", "winter_ndvi"]:
+                resolved[key] = _resolve_ee(entry.get(key))
+            seasonal_resolved.append(resolved)
+        export_csv(seasonal_resolved, "seasonal_ndvi.csv", "vegetation")
+
+    # Export forest stats
+    if results.get("forest_stats"):
+        fs = results["forest_stats"]
+        fs_resolved = [{
+            "forest_2000_km2": _resolve_ee(fs.get("forest_2000_km2")),
+            "forest_loss_km2": _resolve_ee(fs.get("forest_loss_km2")),
+            "forest_gain_km2": _resolve_ee(fs.get("forest_gain_km2")),
+        }]
+        export_csv(fs_resolved, "forest_stats.csv", "vegetation")
+
+    # Export annual forest loss
+    if results.get("forest_loss_annual"):
+        loss_resolved = []
+        for entry in results["forest_loss_annual"]:
+            loss_resolved.append({
+                "year": entry["year"],
+                "loss_km2": _resolve_ee(entry.get("loss_km2")),
+            })
+        export_csv(loss_resolved, "forest_loss_annual.csv", "vegetation")
+
+    # Export cropland area
+    if results.get("cropland_area_km2"):
+        crop_area = _resolve_ee(results["cropland_area_km2"])
+        export_csv([{"cropland_area_km2": crop_area}], "cropland_area.csv", "vegetation")
+
+    if results.get("cropland_mask"):
+        try:
+            export_to_drive(
+                results["cropland_mask"].toFloat(),
+                "cropland_mask_2021", region=region,
+            )
+        except Exception as e:
+            print(f"  Export cropland mask skipped: {e}")
+
+    print("\nVegetation analysis complete.")
+
+
+def run_landcover():
+    """Land cover / LULC classification and change analysis."""
+    from land_cover import run_land_cover_analysis
+
+    print("\n" + "=" * 60)
+    print(f"LAND COVER ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("landcover")
+
+    results = run_land_cover_analysis(region)
+
+    # Export MODIS LULC time series
+    if results.get("modis_timeseries"):
+        ts_resolved = []
+        for entry in results["modis_timeseries"]:
+            resolved = {"year": entry["year"]}
+            for key, val in entry.items():
+                if key != "year":
+                    resolved[key] = _resolve_ee(val)
+            ts_resolved.append(resolved)
+        export_csv(ts_resolved, "modis_lulc_timeseries.csv", "landcover")
+
+    # Export Dynamic World time series
+    if results.get("dw_timeseries"):
+        dw_resolved = []
+        for entry in results["dw_timeseries"]:
+            resolved = {"year": entry["year"]}
+            for cls in cfg.DW_CLASSES:
+                resolved[cls] = _resolve_ee(entry.get(cls))
+            dw_resolved.append(resolved)
+        export_csv(dw_resolved, "dynamic_world_timeseries.csv", "landcover")
+
+    # Export ESA WorldCover
+    if results.get("esa_worldcover"):
+        try:
+            export_to_drive(results["esa_worldcover"], "esa_worldcover_2021", region=region)
+        except Exception as e:
+            print(f"  Export WorldCover skipped: {e}")
+
+    # Export change maps
+    for key in ["modis_change", "dw_change"]:
+        change = results.get(key)
+        if change:
+            try:
+                export_to_drive(
+                    change["changed"].toFloat(),
+                    f"{key}_map", region=region,
+                )
+            except Exception as e:
+                print(f"  Export {key} skipped: {e}")
+
+    print("\nLand cover analysis complete.")
+
+
+def run_airquality():
+    """Air quality analysis using Sentinel-5P."""
+    from air_quality import run_air_quality_analysis
+
+    print("\n" + "=" * 60)
+    print(f"AIR QUALITY ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("airquality")
+
+    results = run_air_quality_analysis(region)
+
+    # Export pollutant time series
+    for pollutant, ts in results.get("timeseries", {}).items():
+        ts_resolved = []
+        for entry in ts:
+            ts_resolved.append({
+                "year": entry.get("year"),
+                "mean": _resolve_ee(entry.get("mean")),
+                "max": _resolve_ee(entry.get("max")),
+                "median": _resolve_ee(entry.get("median")),
+            })
+        export_csv(ts_resolved, f"{pollutant.lower()}_timeseries.csv", "airquality")
+
+    # Export seasonal patterns
+    for pollutant, seasonal in results.get("seasonal_2023", {}).items():
+        resolved = {"pollutant": pollutant, "year": 2023}
+        for key in ["winter_mean", "pre_monsoon_mean", "monsoon_mean", "post_monsoon_mean"]:
+            resolved[key] = _resolve_ee(seasonal.get(key))
+        export_csv([resolved], f"{pollutant.lower()}_seasonal_2023.csv", "airquality")
+
+    # Export urban pollution
+    for pollutant, cities in results.get("urban_pollution", {}).items():
+        city_resolved = []
+        for c in cities:
+            city_resolved.append({
+                "city": c.get("city", ""),
+                "mean": _resolve_ee(c.get("mean")),
+                "max": _resolve_ee(c.get("max")),
+            })
+        export_csv(city_resolved, f"{pollutant.lower()}_urban_2023.csv", "airquality")
+
+    # Export hotspot maps
+    for pollutant, hotspot in results.get("hotspots", {}).items():
+        try:
+            export_to_drive(
+                hotspot["hotspots"].toFloat(),
+                f"{pollutant.lower()}_hotspots_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export {pollutant} hotspots skipped: {e}")
+
+    # Export AQI composite
+    if results.get("aqi_composite"):
+        try:
+            export_to_drive(results["aqi_composite"], "aqi_composite_2023", region=region)
+        except Exception as e:
+            print(f"  Export AQI composite skipped: {e}")
+
+    print("\nAir quality analysis complete.")
+
+
+def run_climate():
+    """Climate analysis: rainfall, temperature, drought."""
+    from climate import run_climate_analysis
+
+    print("\n" + "=" * 60)
+    print(f"CLIMATE ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("climate")
+
+    results = run_climate_analysis(region)
+
+    # Export rainfall time series
+    if results.get("rainfall_timeseries"):
+        ts_resolved = []
+        for entry in results["rainfall_timeseries"]:
+            ts_resolved.append({
+                "year": entry["year"],
+                "mean_precip_mm": _resolve_ee(entry.get("mean_precip_mm")),
+                "max_precip_mm": _resolve_ee(entry.get("max_precip_mm")),
+            })
+        export_csv(ts_resolved, "rainfall_timeseries.csv", "climate")
+
+    # Export LST time series
+    if results.get("lst_timeseries"):
+        lst_resolved = []
+        for entry in results["lst_timeseries"]:
+            lst_resolved.append({
+                "year": entry["year"],
+                "day_lst_c": _resolve_ee(entry.get("day_lst_c")),
+                "night_lst_c": _resolve_ee(entry.get("night_lst_c")),
+            })
+        export_csv(lst_resolved, "lst_timeseries.csv", "climate")
+
+    # Export UHI results
+    uhi_resolved = []
+    for city, uhi in results.get("uhi", {}).items():
+        uhi_resolved.append({
+            "city": city,
+            "urban_lst_c": _resolve_ee(uhi.get("urban_lst_c")),
+            "rural_lst_c": _resolve_ee(uhi.get("rural_lst_c")),
+            "uhi_intensity_c": _resolve_ee(uhi.get("uhi_intensity_c")),
+        })
+    if uhi_resolved:
+        export_csv(uhi_resolved, "urban_heat_island.csv", "climate")
+
+    # Export monsoon rainfall
+    if results.get("monsoon_rainfall"):
+        monsoon_resolved = []
+        for entry in results["monsoon_rainfall"]:
+            monsoon_resolved.append({
+                "year": entry["year"],
+                "monsoon_precip_mm": _resolve_ee(entry.get("monsoon_precip_mm")),
+            })
+        export_csv(monsoon_resolved, "monsoon_rainfall.csv", "climate")
+
+    # Export drought maps
+    for year, drought in results.get("drought", {}).items():
+        if drought is not None:
+            try:
+                export_to_drive(drought.toFloat(), f"drought_index_{year}", region=region)
+            except Exception as e:
+                print(f"  Export drought {year} skipped: {e}")
+
+    print("\nClimate analysis complete.")
+
+
+def run_poverty():
+    """Poverty proxy mapping and analysis."""
+    from poverty import run_poverty_analysis
+
+    print("\n" + "=" * 60)
+    print(f"POVERTY PROXY MAPPING – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("poverty")
+
+    results = run_poverty_analysis(region)
+
+    # Export poverty index map
+    if results.get("poverty_2020"):
+        try:
+            export_to_drive(
+                results["poverty_2020"].toFloat(),
+                "poverty_index_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export poverty index skipped: {e}")
+
+    if results.get("poverty_levels_2020"):
+        try:
+            export_to_drive(
+                results["poverty_levels_2020"].toFloat(),
+                "poverty_levels_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export poverty levels skipped: {e}")
+
+    # Export division stats
+    if results.get("division_stats"):
+        try:
+            export_fc_to_csv(results["division_stats"], "poverty_by_division.csv", "poverty")
+        except Exception as e:
+            print(f"  Export division stats skipped: {e}")
+
+    # Export poverty change
+    if results.get("poverty_change"):
+        try:
+            export_to_drive(
+                results["poverty_change"].toFloat(),
+                "poverty_change_2012_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export poverty change skipped: {e}")
+
+    # Export district ranking
+    if results.get("district_ranking"):
+        try:
+            export_fc_to_csv(results["district_ranking"], "poverty_district_ranking.csv", "poverty")
+        except Exception as e:
+            print(f"  Export district ranking skipped: {e}")
+
+    # Export time series stats
+    if results.get("poverty_timeseries"):
+        ts_resolved = []
+        for year, stats in results["poverty_timeseries"].items():
+            entry = {"year": year}
+            if hasattr(stats, 'getInfo'):
+                info = stats.getInfo()
+                if isinstance(info, dict):
+                    entry.update(info)
+            ts_resolved.append(entry)
+        export_csv(ts_resolved, "poverty_timeseries.csv", "poverty")
+
+    print("\nPoverty analysis complete.")
+
+
+def run_infrastructure():
+    """Infrastructure and construction analysis."""
+    from infrastructure import run_infrastructure_analysis
+
+    print("\n" + "=" * 60)
+    print(f"INFRASTRUCTURE & CONSTRUCTION – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("infrastructure")
+
+    results = run_infrastructure_analysis(region)
+
+    # Export construction area stats
+    if results.get("construction_area"):
+        ca = results["construction_area"]
+        export_csv([{
+            "period": ca["period"],
+            "new_construction_km2": _resolve_ee(ca.get("new_construction_km2")),
+            "demolished_km2": _resolve_ee(ca.get("demolished_km2")),
+        }], "construction_area_2018_2024.csv", "infrastructure")
+
+    # Export construction time series
+    if results.get("construction_timeseries"):
+        ts_resolved = []
+        for entry in results["construction_timeseries"]:
+            ts_resolved.append({
+                "period": entry["period"],
+                "new_construction_km2": _resolve_ee(entry.get("new_construction_km2")),
+                "demolished_km2": _resolve_ee(entry.get("demolished_km2")),
+            })
+        export_csv(ts_resolved, "construction_timeseries.csv", "infrastructure")
+
+    # Export construction change maps
+    change = results.get("construction_2018_2024")
+    if change:
+        for key in ["new_construction", "demolished"]:
+            try:
+                export_to_drive(
+                    change[key].toFloat(),
+                    f"{key}_2018_2024", region=region,
+                )
+            except Exception as e:
+                print(f"  Export {key} skipped: {e}")
+
+    # Export construction hotspots
+    hotspot = results.get("hotspots")
+    if hotspot:
+        try:
+            export_to_drive(
+                hotspot["hotspots"].toFloat(),
+                "construction_hotspots_2018_2024", region=region,
+            )
+        except Exception as e:
+            print(f"  Export hotspots skipped: {e}")
+
+    # Export economic zone growth
+    for zone, growth in results.get("economic_zones", {}).items():
+        growth_resolved = []
+        for entry in growth:
+            growth_resolved.append({
+                "year": entry["year"],
+                "built_area_km2": _resolve_ee(entry.get("built_area_km2")),
+            })
+        zone_slug = zone.lower().replace(" ", "_")
+        export_csv(growth_resolved, f"{zone_slug}_growth.csv", "infrastructure")
+
+    # Export infrastructure density
+    if results.get("infra_density"):
+        try:
+            export_to_drive(
+                results["infra_density"].toFloat(),
+                "infrastructure_density", region=region,
+            )
+        except Exception as e:
+            print(f"  Export infra density skipped: {e}")
+
+    # Export connectivity index
+    if results.get("connectivity"):
+        try:
+            export_to_drive(
+                results["connectivity"].toFloat(),
+                "connectivity_index", region=region,
+            )
+        except Exception as e:
+            print(f"  Export connectivity skipped: {e}")
+
+    print("\nInfrastructure analysis complete.")
+
+
+def run_crops():
+    """Crop detection, rice phenology, and agricultural analysis."""
+    from crop_detection import run_crop_detection_analysis
+
+    print("\n" + "=" * 60)
+    print(f"CROP DETECTION & RICE PHENOLOGY – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("crops")
+
+    results = run_crop_detection_analysis(region)
+
+    # Export rice area time series
+    if results.get("rice_timeseries"):
+        ts_resolved = []
+        for entry in results["rice_timeseries"]:
+            ts_resolved.append({
+                "year": entry["year"],
+                "season": entry.get("season", "monsoon"),
+                "rice_area_km2": _resolve_ee(entry.get("rice_area_km2")),
+            })
+        export_csv(ts_resolved, "rice_area_timeseries.csv", "crops")
+
+    # Export crop type area stats
+    if results.get("crop_area_stats"):
+        crop_resolved = []
+        for entry in results["crop_area_stats"]:
+            crop_resolved.append({
+                "crop_type": entry.get("crop_type", ""),
+                "area_km2": _resolve_ee(entry.get("area_km2")),
+            })
+        export_csv(crop_resolved, "crop_area_stats.csv", "crops")
+
+    # Export rice paddy mask
+    if results.get("rice_paddy_mask"):
+        try:
+            export_to_drive(
+                results["rice_paddy_mask"].toFloat(),
+                "rice_paddy_mask_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export rice paddy mask skipped: {e}")
+
+    # Export crop type map
+    if results.get("crop_type_map"):
+        try:
+            export_to_drive(
+                results["crop_type_map"].toFloat(),
+                "crop_type_map_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export crop type map skipped: {e}")
+
+    # Export cropping intensity
+    if results.get("cropping_intensity"):
+        try:
+            export_to_drive(
+                results["cropping_intensity"].toFloat(),
+                "cropping_intensity_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export cropping intensity skipped: {e}")
+
+    # Export yield proxy stats
+    if results.get("yield_proxy"):
+        yield_resolved = {
+            "year": 2023,
+            "mean_yield_proxy": _resolve_ee(results["yield_proxy"].get("mean_yield_proxy")),
+            "max_yield_proxy": _resolve_ee(results["yield_proxy"].get("max_yield_proxy")),
+        }
+        export_csv([yield_resolved], "yield_proxy_2023.csv", "crops")
+
+    # Export crop stress
+    if results.get("crop_stress"):
+        try:
+            export_to_drive(
+                results["crop_stress"].toFloat(),
+                "crop_stress_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export crop stress skipped: {e}")
+
+    print("\nCrop detection analysis complete.")
+
+
+def run_slums():
+    """Slum/informal settlement mapping and analysis."""
+    from slum_mapping import run_slum_analysis
+
+    print("\n" + "=" * 60)
+    print(f"SLUM / INFORMAL SETTLEMENT MAPPING – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("slums")
+
+    results = run_slum_analysis(region)
+
+    # Export slum index map
+    if results.get("slum_index_2020"):
+        try:
+            export_to_drive(
+                results["slum_index_2020"].toFloat(),
+                "slum_index_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export slum index skipped: {e}")
+
+    # Export slum risk classification
+    if results.get("slum_risk_2020"):
+        try:
+            export_to_drive(
+                results["slum_risk_2020"].toFloat(),
+                "slum_risk_classification_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export slum risk skipped: {e}")
+
+    # Export slum area estimate
+    if results.get("slum_area_2020"):
+        sa = results["slum_area_2020"]
+        export_csv([{
+            "year": sa.get("year", 2020),
+            "slum_area_km2": _resolve_ee(sa.get("slum_area_km2")),
+            "threshold": sa.get("threshold", 0.6),
+        }], "slum_area_2020.csv", "slums")
+
+    # Export known slum area stats
+    if results.get("known_slums"):
+        known_resolved = []
+        for entry in results["known_slums"]:
+            known_resolved.append({
+                "area": entry.get("area", ""),
+                "mean_slum_index": _resolve_ee(entry.get("mean_slum_index")),
+                "max_slum_index": _resolve_ee(entry.get("max_slum_index")),
+            })
+        export_csv(known_resolved, "known_slum_areas.csv", "slums")
+
+    # Export slum growth
+    if results.get("slum_growth"):
+        sg = results["slum_growth"]
+        export_csv([{
+            "period": sg.get("period", ""),
+            "new_slum_km2": _resolve_ee(sg.get("new_slum_km2")),
+            "cleared_slum_km2": _resolve_ee(sg.get("cleared_slum_km2")),
+        }], "slum_growth_2010_2020.csv", "slums")
+        if sg.get("new_slum_mask"):
+            try:
+                export_to_drive(
+                    sg["new_slum_mask"].toFloat(),
+                    "new_slum_areas_2010_2020", region=region,
+                )
+            except Exception as e:
+                print(f"  Export slum growth map skipped: {e}")
+
+    # Export slum area time series
+    if results.get("slum_timeseries"):
+        ts_resolved = []
+        for entry in results["slum_timeseries"]:
+            ts_resolved.append({
+                "year": entry.get("year"),
+                "slum_area_km2": _resolve_ee(entry.get("slum_area_km2")),
+            })
+        export_csv(ts_resolved, "slum_area_timeseries.csv", "slums")
+
+    print("\nSlum mapping analysis complete.")
+
+
+def run_coastal():
+    """Coastal zone, mangrove, and cyclone impact analysis."""
+    from coastal import run_coastal_analysis
+
+    print("\n" + "=" * 60)
+    print(f"COASTAL & MANGROVE ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("coastal")
+
+    results = run_coastal_analysis(region)
+
+    # Export LECZ map
+    if results.get("lecz"):
+        try:
+            export_to_drive(results["lecz"].toFloat(), "lecz_5m", region=region)
+        except Exception as e:
+            print(f"  Export LECZ skipped: {e}")
+
+    # Export LECZ areas
+    if results.get("lecz_areas"):
+        lecz_resolved = []
+        for entry in results["lecz_areas"]:
+            lecz_resolved.append({
+                "elevation_threshold_m": entry["elevation_threshold_m"],
+                "area_km2": _resolve_ee(entry.get("area_km2")),
+            })
+        export_csv(lecz_resolved, "lecz_areas.csv", "coastal")
+
+    # Export LECZ population
+    if results.get("lecz_population"):
+        lp = results["lecz_population"]
+        export_csv([{
+            "threshold_m": lp.get("threshold_m"),
+            "year": lp.get("year"),
+            "population_in_lecz": _resolve_ee(lp.get("population_in_lecz")),
+        }], "lecz_population.csv", "coastal")
+
+    # Export shoreline changes
+    if results.get("shoreline_changes"):
+        sc_resolved = []
+        for entry in results["shoreline_changes"]:
+            sc_resolved.append({
+                "period": entry.get("period", ""),
+                "accretion_km2": _resolve_ee(entry.get("accretion_km2")),
+                "erosion_km2": _resolve_ee(entry.get("erosion_km2")),
+            })
+        export_csv(sc_resolved, "shoreline_changes.csv", "coastal")
+
+    # Export mangrove area
+    if results.get("mangrove_area"):
+        ma = results["mangrove_area"]
+        export_csv([{
+            "year": ma.get("year"),
+            "mangrove_area_km2": _resolve_ee(ma.get("mangrove_area_km2")),
+        }], "mangrove_area.csv", "coastal")
+
+    # Export mangrove health time series
+    if results.get("mangrove_health"):
+        mh_resolved = []
+        for entry in results["mangrove_health"]:
+            mh_resolved.append({
+                "year": entry.get("year"),
+                "mean_mangrove_ndvi": _resolve_ee(entry.get("mean_mangrove_ndvi")),
+                "std_mangrove_ndvi": _resolve_ee(entry.get("std_mangrove_ndvi")),
+            })
+        export_csv(mh_resolved, "mangrove_health_timeseries.csv", "coastal")
+
+    # Export mangrove change
+    if results.get("mangrove_change"):
+        mc = results["mangrove_change"]
+        export_csv([{
+            "mangrove_loss_km2": _resolve_ee(mc.get("mangrove_loss_km2")),
+        }], "mangrove_loss.csv", "coastal")
+        if mc.get("mangrove_loss_mask"):
+            try:
+                export_to_drive(
+                    mc["mangrove_loss_mask"].toFloat(),
+                    "mangrove_loss_map", region=region,
+                )
+            except Exception as e:
+                print(f"  Export mangrove loss map skipped: {e}")
+
+    # Export cyclone impacts
+    if results.get("cyclone_impacts"):
+        cyc_resolved = []
+        for entry in results["cyclone_impacts"]:
+            cyc_resolved.append({
+                "cyclone": entry.get("cyclone", ""),
+                "mean_ndvi_drop": _resolve_ee(entry.get("mean_ndvi_drop")),
+                "max_ndvi_drop": _resolve_ee(entry.get("max_ndvi_drop")),
+            })
+        export_csv(cyc_resolved, "cyclone_impacts.csv", "coastal")
+
+    print("\nCoastal analysis complete.")
+
+
+def run_soil():
+    """Soil properties, erosion risk, and agricultural suitability."""
+    from soil_analysis import run_soil_analysis
+
+    print("\n" + "=" * 60)
+    print(f"SOIL ANALYSIS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("soil")
+
+    results = run_soil_analysis(region)
+
+    # Export soil stats
+    if results.get("soil_stats"):
+        stats = results["soil_stats"]
+        if hasattr(stats, 'getInfo'):
+            stats_info = stats.getInfo()
+            if isinstance(stats_info, dict):
+                export_csv([stats_info], "soil_properties.csv", "soil")
+
+    # Export erosion risk map
+    if results.get("erosion_risk"):
+        try:
+            export_to_drive(
+                results["erosion_risk"].toFloat(),
+                "erosion_risk_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export erosion risk skipped: {e}")
+
+    # Export salinity proxy
+    if results.get("salinity_proxy"):
+        try:
+            export_to_drive(
+                results["salinity_proxy"].toFloat(),
+                "salinity_proxy_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export salinity proxy skipped: {e}")
+
+    # Export salinity risk zones
+    if results.get("salinity_risk"):
+        try:
+            export_to_drive(
+                results["salinity_risk"].toFloat(),
+                "salinity_risk_zones", region=region,
+            )
+        except Exception as e:
+            print(f"  Export salinity risk skipped: {e}")
+
+    # Export ag suitability
+    if results.get("ag_suitability"):
+        try:
+            export_to_drive(
+                results["ag_suitability"].toFloat(),
+                "agricultural_suitability", region=region,
+            )
+        except Exception as e:
+            print(f"  Export ag suitability skipped: {e}")
+
+    print("\nSoil analysis complete.")
+
+
+def run_health():
+    """Health risk proxy mapping."""
+    from health_risk import run_health_risk_analysis
+
+    print("\n" + "=" * 60)
+    print(f"HEALTH RISK MAPPING – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("health")
+
+    results = run_health_risk_analysis(region)
+
+    # Export waterlogging risk
+    if results.get("waterlogging"):
+        try:
+            export_to_drive(
+                results["waterlogging"].toFloat(),
+                "waterlogging_risk_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export waterlogging skipped: {e}")
+
+    # Export heat stress
+    if results.get("heat_stress"):
+        try:
+            export_to_drive(
+                results["heat_stress"].toFloat(),
+                "heat_stress_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export heat stress skipped: {e}")
+
+    # Export mosquito habitat
+    if results.get("mosquito_habitat"):
+        try:
+            export_to_drive(
+                results["mosquito_habitat"].toFloat(),
+                "mosquito_habitat_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export mosquito habitat skipped: {e}")
+
+    # Export air pollution risk
+    if results.get("air_pollution_risk"):
+        try:
+            export_to_drive(
+                results["air_pollution_risk"].toFloat(),
+                "air_pollution_risk_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export air pollution risk skipped: {e}")
+
+    # Export arsenic zones
+    if results.get("arsenic_zones"):
+        try:
+            export_to_drive(
+                results["arsenic_zones"].toFloat(),
+                "arsenic_risk_zones", region=region,
+            )
+        except Exception as e:
+            print(f"  Export arsenic zones skipped: {e}")
+
+    # Export composite health risk index
+    if results.get("health_risk_2023"):
+        try:
+            export_to_drive(
+                results["health_risk_2023"].toFloat(),
+                "health_risk_index_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export health risk index skipped: {e}")
+
+    # Export health risk time series
+    if results.get("health_risk_timeseries"):
+        ts_resolved = []
+        for entry in results["health_risk_timeseries"]:
+            ts_resolved.append({
+                "year": entry.get("year"),
+                "mean_health_risk": _resolve_ee(entry.get("mean_health_risk")),
+            })
+        export_csv(ts_resolved, "health_risk_timeseries.csv", "health")
+
+    print("\nHealth risk analysis complete.")
+
+
+def run_energy():
+    """Renewable energy potential mapping."""
+    from energy import run_energy_analysis
+
+    print("\n" + "=" * 60)
+    print(f"ENERGY POTENTIAL MAPPING – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("energy")
+
+    results = run_energy_analysis(region)
+
+    # Export solar potential map
+    solar = results.get("solar", {})
+    if solar.get("solar_potential"):
+        try:
+            export_to_drive(
+                solar["solar_potential"].toFloat(),
+                "solar_potential_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export solar potential skipped: {e}")
+
+    # Export solar stats
+    if results.get("solar_stats"):
+        ss = results["solar_stats"]
+        export_csv([{
+            "year": ss.get("year"),
+            "mean_irradiance": _resolve_ee(ss.get("mean_irradiance")),
+            "max_irradiance": _resolve_ee(ss.get("max_irradiance")),
+        }], "solar_stats.csv", "energy")
+
+    # Export wind potential
+    wind = results.get("wind", {})
+    if wind.get("wind_potential"):
+        try:
+            export_to_drive(
+                wind["wind_potential"].toFloat(),
+                "wind_potential_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export wind potential skipped: {e}")
+
+    if wind.get("wind_speed"):
+        try:
+            export_to_drive(
+                wind["wind_speed"].toFloat(),
+                "wind_speed_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export wind speed skipped: {e}")
+
+    # Export biomass
+    if results.get("biomass"):
+        try:
+            export_to_drive(
+                results["biomass"].toFloat(),
+                "biomass_proxy_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export biomass skipped: {e}")
+
+    if results.get("biomass_stats"):
+        bs = results["biomass_stats"]
+        export_csv([{
+            "year": bs.get("year"),
+            "mean_biomass": _resolve_ee(bs.get("mean_biomass")),
+            "total_biomass": _resolve_ee(bs.get("total_biomass")),
+        }], "biomass_stats.csv", "energy")
+
+    # Export energy access
+    if results.get("energy_access"):
+        try:
+            export_to_drive(
+                results["energy_access"].toFloat(),
+                "energy_access_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export energy access skipped: {e}")
+
+    # Export energy poverty
+    if results.get("energy_poverty"):
+        ep = results["energy_poverty"]
+        export_csv([{
+            "year": ep.get("year"),
+            "energy_poor_population": _resolve_ee(ep.get("energy_poor_population")),
+        }], "energy_poverty_2020.csv", "energy")
+
+    # Export energy access time series
+    if results.get("energy_timeseries"):
+        ts_resolved = []
+        for entry in results["energy_timeseries"]:
+            ts_resolved.append({
+                "year": entry.get("year"),
+                "energy_poor_population": _resolve_ee(entry.get("energy_poor_population")),
+            })
+        export_csv(ts_resolved, "energy_access_timeseries.csv", "energy")
+
+    print("\nEnergy potential analysis complete.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Full Pipeline Runners
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def run_full():
-    """Run the complete pipeline."""
+    """Run the complete water analysis pipeline (original modules)."""
     label = cfg.scope_label()
     print("\n" + "=" * 60)
-    print(f"FULL PIPELINE – {label} (1985–2025)")
+    print(f"FULL WATER PIPELINE – {label} (1985–2025)")
     print("=" * 60)
 
     start = time.time()
@@ -522,7 +1631,52 @@ def run_full():
 
     elapsed = (time.time() - start) / 60
     print(f"\n{'=' * 60}")
-    print(f"FULL PIPELINE COMPLETE – {elapsed:.1f} minutes")
+    print(f"FULL WATER PIPELINE COMPLETE – {elapsed:.1f} minutes")
+    print(f"  Scope: {label}")
+    print(f"  All outputs saved to: {cfg.OUTPUT_DIR}")
+    print("=" * 60)
+
+
+def run_full_extended():
+    """Run ALL analysis modules (water + extended + domain-specific)."""
+    label = cfg.scope_label()
+    print("\n" + "=" * 60)
+    print(f"FULL EXTENDED PIPELINE – {label}")
+    print("  Water + Nightlights + Urbanization + Vegetation + Land Cover")
+    print("  + Air Quality + Climate + Poverty + Infrastructure")
+    print("  + Crops + Slums + Coastal + Soil + Health + Energy")
+    print("=" * 60)
+
+    start = time.time()
+
+    # Original water modules
+    run_test()
+    run_rivers()
+    run_floods()
+    run_changes()
+    run_haors()
+
+    # Extended modules
+    run_nightlights()
+    run_urbanization()
+    run_vegetation()
+    run_landcover()
+    run_airquality()
+    run_climate()
+    run_poverty()
+    run_infrastructure()
+
+    # Domain-specific modules
+    run_crops()
+    run_slums()
+    run_coastal()
+    run_soil()
+    run_health()
+    run_energy()
+
+    elapsed = (time.time() - start) / 60
+    print(f"\n{'=' * 60}")
+    print(f"FULL EXTENDED PIPELINE COMPLETE – {elapsed:.1f} minutes")
     print(f"  Scope: {label}")
     print(f"  All outputs saved to: {cfg.OUTPUT_DIR}")
     print("=" * 60)
@@ -536,12 +1690,34 @@ def main():
         choices=["sylhet", "national", "barishal", "chattogram", "dhaka",
                  "khulna", "mymensingh", "rajshahi", "rangpur"],
         help="Processing scope (default: from config)")
+
+    # Original modules
     parser.add_argument("--test", action="store_true", help="Quick test run")
-    parser.add_argument("--full", action="store_true", help="Full analysis")
+    parser.add_argument("--full", action="store_true", help="Full water analysis")
     parser.add_argument("--rivers", action="store_true", help="River analysis only")
     parser.add_argument("--floods", action="store_true", help="Flood analysis only")
     parser.add_argument("--changes", action="store_true", help="Water change detection only")
     parser.add_argument("--haors", action="store_true", help="Haor/wetland analysis only")
+
+    # Extended modules
+    parser.add_argument("--nightlights", action="store_true", help="Nighttime lights analysis")
+    parser.add_argument("--urbanization", action="store_true", help="Urbanization analysis")
+    parser.add_argument("--vegetation", action="store_true", help="Vegetation & agriculture")
+    parser.add_argument("--landcover", action="store_true", help="Land cover / LULC analysis")
+    parser.add_argument("--airquality", action="store_true", help="Air quality (Sentinel-5P)")
+    parser.add_argument("--climate", action="store_true", help="Climate (rainfall, LST, drought)")
+    parser.add_argument("--poverty", action="store_true", help="Poverty proxy mapping")
+    parser.add_argument("--infrastructure", action="store_true", help="Infrastructure & construction")
+
+    # Domain-specific modules
+    parser.add_argument("--crops", action="store_true", help="Crop detection & rice phenology")
+    parser.add_argument("--slums", action="store_true", help="Slum/informal settlement mapping")
+    parser.add_argument("--coastal", action="store_true", help="Coastal & mangrove analysis")
+    parser.add_argument("--soil", action="store_true", help="Soil properties & erosion risk")
+    parser.add_argument("--health", action="store_true", help="Health risk proxy mapping")
+    parser.add_argument("--energy", action="store_true", help="Renewable energy potential")
+    parser.add_argument("--full-extended", action="store_true", help="ALL modules")
+
     args = parser.parse_args()
 
     # Set scope if provided via CLI
@@ -551,7 +1727,9 @@ def main():
     print(f"Scope: {cfg.scope_label()} | Threshold: {cfg.DEFAULT_THRESHOLD_METHOD} | "
           f"Rivers: {len(cfg.RIVERS)} | Wetlands: {len(cfg.HAORS)}")
 
-    if args.full:
+    if args.full_extended:
+        run_full_extended()
+    elif args.full:
         run_full()
     elif args.rivers:
         init_gee()
@@ -562,6 +1740,34 @@ def main():
         run_changes()
     elif args.haors:
         run_haors()
+    elif args.nightlights:
+        run_nightlights()
+    elif args.urbanization:
+        run_urbanization()
+    elif args.vegetation:
+        run_vegetation()
+    elif args.landcover:
+        run_landcover()
+    elif args.airquality:
+        run_airquality()
+    elif args.climate:
+        run_climate()
+    elif args.poverty:
+        run_poverty()
+    elif args.infrastructure:
+        run_infrastructure()
+    elif args.crops:
+        run_crops()
+    elif args.slums:
+        run_slums()
+    elif args.coastal:
+        run_coastal()
+    elif args.soil:
+        run_soil()
+    elif args.health:
+        run_health()
+    elif args.energy:
+        run_energy()
     else:
         run_test()
 

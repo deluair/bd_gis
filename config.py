@@ -273,9 +273,205 @@ MAX_PIXELS = 1e12 if SCOPE == "national" else 1e10
 JRC_WATER = "JRC/GSW1_4/GlobalSurfaceWater"
 JRC_MONTHLY = "JRC/GSW1_4/MonthlyHistory"
 SRTM_DEM = "USGS/SRTMGL1_003"
+ALOS_DEM = "JAXA/ALOS/AW3D30/V3_2"
 
 # Haor elevation threshold
 HAOR_MAX_ELEVATION = 20
+
+# ── Nighttime Lights ────────────────────────────────────────────────────────
+DMSP_OLS = {
+    "collection": "NOAA/DMSP-OLS/NIGHTTIME_LIGHTS",
+    "band": "stable_lights",
+    "years": (1992, 2013),
+}
+VIIRS_DNB = {
+    "collection": "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG",
+    "band": "avg_rad",
+    "years": (2014, 2025),
+}
+
+# ── Land Cover / Land Use ───────────────────────────────────────────────────
+MODIS_LANDCOVER = {
+    "collection": "MODIS/061/MCD12Q1",
+    "band": "LC_Type1",   # IGBP classification
+    "years": (2001, 2023),
+    "scale": 500,
+}
+ESA_WORLDCOVER = {
+    "2020": "ESA/WorldCover/v100",
+    "2021": "ESA/WorldCover/v200",
+    "band": "Map",
+    "scale": 10,
+}
+DYNAMIC_WORLD = {
+    "collection": "GOOGLE/DYNAMICWORLD/V1",
+    "band": "label",
+    "years": (2015, 2025),
+    "scale": 10,
+}
+COPERNICUS_LANDCOVER = {
+    "collection": "COPERNICUS/Landcover/100m/Prj/Global/V3",
+    "band": "discrete_classification",
+    "years": (2015, 2019),
+    "scale": 100,
+}
+
+# Dynamic World class names (0-8)
+DW_CLASSES = [
+    "water", "trees", "grass", "flooded_vegetation", "crops",
+    "shrub_and_scrub", "built", "bare", "snow_and_ice",
+]
+
+# ── Vegetation / Agriculture ────────────────────────────────────────────────
+MODIS_NDVI = {
+    "collection": "MODIS/061/MOD13A2",
+    "ndvi_band": "NDVI",
+    "evi_band": "EVI",
+    "scale_factor": 0.0001,
+    "scale": 1000,
+    "years": (2000, 2025),
+}
+GLOBAL_FOREST_CHANGE = {
+    "image": "UMD/hansen/global_forest_change_2023_v1_11",
+    "bands": {
+        "treecover2000": "treecover2000",
+        "loss": "loss",
+        "gain": "gain",
+        "lossyear": "lossyear",
+    },
+    "scale": 30,
+}
+
+# ── Air Quality (Sentinel-5P) ───────────────────────────────────────────────
+SENTINEL5P = {
+    "NO2": {
+        "collection": "COPERNICUS/S5P/OFFL/L3_NO2",
+        "band": "tropospheric_NO2_column_number_density",
+        "scale": 1113.2,
+    },
+    "SO2": {
+        "collection": "COPERNICUS/S5P/OFFL/L3_SO2",
+        "band": "SO2_column_number_density",
+        "scale": 1113.2,
+    },
+    "CO": {
+        "collection": "COPERNICUS/S5P/OFFL/L3_CO",
+        "band": "CO_column_number_density",
+        "scale": 1113.2,
+    },
+    "AEROSOL": {
+        "collection": "COPERNICUS/S5P/OFFL/L3_AER_AI",
+        "band": "absorbing_aerosol_index",
+        "scale": 1113.2,
+    },
+    "HCHO": {
+        "collection": "COPERNICUS/S5P/OFFL/L3_HCHO",
+        "band": "tropospheric_HCHO_column_number_density",
+        "scale": 1113.2,
+    },
+    "years": (2018, 2025),
+}
+
+# ── Temperature (MODIS LST) ────────────────────────────────────────────────
+MODIS_LST = {
+    "collection": "MODIS/061/MOD11A2",
+    "day_band": "LST_Day_1km",
+    "night_band": "LST_Night_1km",
+    "scale_factor": 0.02,  # DN to Kelvin
+    "kelvin_offset": -273.15,  # K to C
+    "scale": 1000,
+    "years": (2000, 2025),
+}
+
+# ── Rainfall / Climate ─────────────────────────────────────────────────────
+CHIRPS = {
+    "collection": "UCSB-CHG/CHIRPS/DAILY",
+    "band": "precipitation",
+    "scale": 5566,
+    "years": (1981, 2025),
+}
+ERA5_LAND = {
+    "collection": "ECMWF/ERA5_LAND/MONTHLY_AGGR",
+    "bands": {
+        "temperature": "temperature_2m",
+        "precipitation": "total_precipitation_sum",
+        "evaporation": "total_evaporation_sum",
+    },
+    "scale": 11132,
+    "years": (1950, 2025),
+}
+
+# ── Population Density ──────────────────────────────────────────────────────
+WORLDPOP = {
+    "collection": "WorldPop/GP/100m/pop",
+    "band": "population",
+    "scale": 100,
+    "years": (2000, 2020),
+}
+GPW_POPULATION = {
+    "collection": "CIESIN/GPWv411/GPW_Population_Density_Adjusted_to_2015_UNWPP_Country_Totals_Rev11",
+    "band": "population_density",
+    "scale": 927.67,
+}
+
+# ── Built-Up / Human Settlement ─────────────────────────────────────────────
+GHSL_BUILT = {
+    "image": "JRC/GHSL/P2023A/GHS_BUILT_S/2030",
+    "collection": "JRC/GHSL/P2023A/GHS_BUILT_S",
+    "band": "built_surface",
+    "scale": 100,
+}
+GHSL_SMOD = {
+    "collection": "JRC/GHSL/P2023A/GHS_SMOD",
+    "band": "smod_code",
+    "scale": 1000,
+    # Classes: 10=water, 11=very low, 12=low, 13=rural, 21=suburban, 22=semi-dense, 23=dense, 30=urban
+}
+GHSL_POP = {
+    "collection": "JRC/GHSL/P2023A/GHS_POP",
+    "band": "population_count",
+    "scale": 100,
+}
+
+# ── Soil ────────────────────────────────────────────────────────────────────
+OPENLANDMAP_SOIL = {
+    "clay": "OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02",
+    "sand": "OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02",
+    "organic_carbon": "OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02",
+    "ph": "OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02",
+    "scale": 250,
+}
+
+# ── Coastal / Mangrove ──────────────────────────────────────────────────────
+GLOBAL_MANGROVE = {
+    "2000": "LANDSAT/MANGROVE_FORESTS",
+    "scale": 30,
+}
+
+# ── Key Urban Centers (for focused analysis) ────────────────────────────────
+URBAN_CENTERS = {
+    "Dhaka":       {"lat": 23.81, "lon": 90.41, "radius": 25000},
+    "Chittagong":  {"lat": 22.36, "lon": 91.78, "radius": 15000},
+    "Khulna":      {"lat": 22.82, "lon": 89.56, "radius": 12000},
+    "Rajshahi":    {"lat": 24.37, "lon": 88.60, "radius": 10000},
+    "Sylhet":      {"lat": 24.90, "lon": 91.87, "radius": 10000},
+    "Rangpur":     {"lat": 25.74, "lon": 89.25, "radius": 10000},
+    "Barishal":    {"lat": 22.70, "lon": 90.37, "radius": 8000},
+    "Comilla":     {"lat": 23.46, "lon": 91.18, "radius": 8000},
+    "Gazipur":     {"lat": 24.00, "lon": 90.43, "radius": 15000},
+    "Narayanganj": {"lat": 23.63, "lon": 90.50, "radius": 10000},
+}
+
+# ── Industrial / Economic Zones ─────────────────────────────────────────────
+ECONOMIC_ZONES = {
+    "Dhaka EPZ":       {"lat": 23.95, "lon": 90.27, "radius": 5000},
+    "Chittagong EPZ":  {"lat": 22.33, "lon": 91.78, "radius": 5000},
+    "Mongla EPZ":      {"lat": 22.49, "lon": 89.60, "radius": 5000},
+    "Adamjee EPZ":     {"lat": 23.62, "lon": 90.50, "radius": 5000},
+    "Ishwardi EPZ":    {"lat": 24.13, "lon": 89.07, "radius": 5000},
+    "Uttara EPZ":      {"lat": 23.87, "lon": 90.40, "radius": 5000},
+    "Mirsarai EZ":     {"lat": 22.76, "lon": 91.56, "radius": 8000},
+}
 
 
 # ── Scope Helper ─────────────────────────────────────────────────────────────
