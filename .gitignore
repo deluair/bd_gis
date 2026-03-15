@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 *.egg-info/
 outputs/FINDINGS_REPORT.html
+local_data/
