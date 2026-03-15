@@ -63,7 +63,7 @@ def compute_bui(image):
 # Analysis
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_builtup_area(year, region, scale=100):
+def compute_builtup_area(year, region, scale=300 if cfg.SCOPE == "national" else 100):
     """Compute total built-up area (km2) from GHSL for a year."""
     built = get_ghsl_built(year, region)
     # GHSL built_surface is in m2 per pixel; sum and convert to km2
@@ -93,7 +93,7 @@ def compute_builtup_timeseries(region, scale=100):
     return series
 
 
-def compute_urbanization_rate(year1, year2, region, scale=100):
+def compute_urbanization_rate(year1, year2, region, scale=300 if cfg.SCOPE == "national" else 100):
     """Compute annual urbanization rate between two epochs."""
     built1 = get_ghsl_built(year1, region)
     built2 = get_ghsl_built(year2, region)

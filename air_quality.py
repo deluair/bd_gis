@@ -1,6 +1,6 @@
 """
-Air quality analysis – Sentinel-5P TROPOMI pollutant mapping for NO2, SO2,
-CO, aerosol index, and formaldehyde over Bangladesh (2018–present).
+Air quality analysis -- Sentinel-5P TROPOMI pollutant mapping for NO2, SO2,
+CO, aerosol index, and formaldehyde over Bangladesh (2018-present).
 """
 import ee
 import config as cfg
@@ -10,11 +10,38 @@ import config as cfg
 # Data Loading
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _get_aerosol_collection(start_date, end_date, region):
+    """
+    Build QA-filtered, positive-only AAI collection.
+
+    TROPOMI AAI includes negative values for non-absorbing aerosols and cloudy
+    conditions. Taking a raw mean biases results negative. Standard fix:
+    1. qa_value > 0.5 (standard TROPOMI L3 quality threshold)
+    2. AAI > 0 (retain absorbing aerosols only; negatives are a different
+       physical phenomenon)
+    """
+    info = cfg.SENTINEL5P["AEROSOL"]
+    col = (
+        ee.ImageCollection(info["collection"])
+        .filterDate(start_date, end_date)
+        .filterBounds(region)
+    )
+
+    def _qa_positive_filter(img):
+        qa_mask = img.select("qa_value").gt(0.5)
+        aai = img.select(info["band"])
+        return aai.updateMask(qa_mask.And(aai.gt(0)))
+
+    return col.map(_qa_positive_filter)
+
+
 def get_pollutant(pollutant, start_date, end_date, region):
     """
     Get Sentinel-5P mean composite for a pollutant over a date range.
     pollutant: one of 'NO2', 'SO2', 'CO', 'AEROSOL', 'HCHO'
     """
+    if pollutant == "AEROSOL":
+        return _get_aerosol_collection(start_date, end_date, region).mean().clip(region)
     info = cfg.SENTINEL5P[pollutant]
     col = (
         ee.ImageCollection(info["collection"])
@@ -41,7 +68,7 @@ def get_co(start_date, end_date, region):
 
 
 def get_aerosol_index(start_date, end_date, region):
-    """Get UV Absorbing Aerosol Index."""
+    """Get UV Absorbing Aerosol Index (QA-filtered, positive AAI only)."""
     return get_pollutant("AEROSOL", start_date, end_date, region)
 
 
@@ -176,7 +203,7 @@ def run_air_quality_analysis(region):
 
     pollutants = ["NO2", "SO2", "CO", "AEROSOL"]
 
-    print("\n  Computing annual pollutant time series (2019–2024)...")
+    print("\n  Computing annual pollutant time series (2019-2024)...")
     results["timeseries"] = {}
     for p in pollutants:
         print(f"    {p}...")

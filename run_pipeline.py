@@ -58,6 +58,93 @@ def _resolve_ee(val, timeout=300):
     return val
 
 
+def _batch_resolve_ee(data, timeout=600):
+    """Resolve multiple ee values in a single .getInfo() call.
+
+    data: dict of {key: ee_value_or_python_value}
+    Returns: dict of {key: resolved_python_value}
+
+    Batches all ee.ComputedObject values into one ee.Dictionary.getInfo()
+    call, reducing N network roundtrips to 1.
+    """
+    import signal
+    ee_keys = []
+    ee_vals = {}
+    plain = {}
+    for k, v in data.items():
+        if isinstance(v, (ee.Number, ee.ComputedObject)):
+            ee_keys.append(k)
+            ee_vals[k] = v
+        else:
+            plain[k] = v
+
+    if not ee_keys:
+        return dict(plain)
+
+    def _handler(signum, frame):
+        raise TimeoutError("Batch GEE getInfo() timed out")
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(timeout)
+    try:
+        batch = ee.Dictionary(ee_vals).getInfo()
+    except Exception:
+        batch = {k: None for k in ee_keys}
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+    result = dict(plain)
+    result.update(batch)
+    return result
+
+
+def _batch_resolve_list(entries, ee_fields, timeout=600):
+    """Resolve a list of dicts with ee values, batching all into one call.
+
+    entries: list of dicts, each may contain ee values in ee_fields keys
+    ee_fields: list of field names that may contain ee values
+    Returns: list of dicts with all ee values resolved
+
+    Instead of N*M getInfo() calls (N entries, M fields each), this does 1 call.
+    """
+    import signal
+    # Build a flat dict of all ee values: "idx_field" -> ee_value
+    ee_batch = {}
+    for i, entry in enumerate(entries):
+        for f in ee_fields:
+            val = entry.get(f)
+            if isinstance(val, (ee.Number, ee.ComputedObject)):
+                ee_batch[f"{i}_{f}"] = val
+
+    if not ee_batch:
+        return [dict(e) for e in entries]
+
+    def _handler(signum, frame):
+        raise TimeoutError("Batch list GEE getInfo() timed out")
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(timeout)
+    try:
+        resolved = ee.Dictionary(ee_batch).getInfo()
+    except Exception:
+        resolved = {k: None for k in ee_batch}
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+    result = []
+    for i, entry in enumerate(entries):
+        row = {}
+        for k, v in entry.items():
+            if k in ee_fields and f"{i}_{k}" in resolved:
+                row[k] = resolved[f"{i}_{k}"]
+            elif isinstance(v, (ee.Number, ee.ComputedObject)):
+                row[k] = None
+            else:
+                row[k] = v
+        result.append(row)
+    return result
+
+
 from data_acquisition import (
     init_gee, get_study_area, get_seasonal_composite,
     get_srtm_dem, get_jrc_water
@@ -106,8 +193,9 @@ def run_test():
     dry_water = classify_water(dry_composite, region=region)
     monsoon_water = classify_water(monsoon_composite, region=region)
 
-    dry_area = compute_water_area(dry_water, region).getInfo()
-    monsoon_area = compute_water_area(monsoon_water, region).getInfo()
+    _scale = 300 if cfg.SCOPE == "national" else 30
+    dry_area = compute_water_area(dry_water, region, scale=_scale).getInfo()
+    monsoon_area = compute_water_area(monsoon_water, region, scale=_scale).getInfo()
     print(f"  Dry season water area:    {dry_area:.1f} km²")
     print(f"  Monsoon season water area: {monsoon_area:.1f} km²")
     print(f"  Seasonal inundation:       {monsoon_area - dry_area:.1f} km²")
@@ -270,6 +358,8 @@ def run_floods():
             monsoon_val = _resolve_ee(extents["monsoon_area_km2"])
             seasonal_val = _resolve_ee(extents["seasonal_area_km2"])
             if dry_val is not None and monsoon_val is not None:
+                if seasonal_val is not None and seasonal_val == 0 and monsoon_val == dry_val:
+                    print(f"    WARNING: monsoon was <= dry ({dry_val:.1f} km2), clamped")
                 time_series.append({
                     "year": year,
                     "dry_area_km2": dry_val,
@@ -471,11 +561,22 @@ def run_haors():
                 print(f"    Skipped {year}: {e}")
         haor_series[name] = series
 
-    # Resolve ee.Number values
+    # Resolve ee.Number values and filter implausibly small results
+    import math
     for name in haor_series:
+        radius_m = cfg.HAORS[name]["radius"]
+        min_plausible_km2 = 0.01 * math.pi * (radius_m / 1000) ** 2
         for entry in haor_series[name]:
             entry["area_km2"] = _resolve_ee(entry["area_km2"])
-        haor_series[name] = [e for e in haor_series[name] if e["area_km2"] is not None]
+        filtered = []
+        for e in haor_series[name]:
+            if e["area_km2"] is None:
+                continue
+            if e["area_km2"] < min_plausible_km2:
+                print(f"    {name} {e.get('year', '?')}: dropped implausible value {e['area_km2']:.3f} km2 (min {min_plausible_km2:.1f} km2)")
+                continue
+            filtered.append(e)
+        haor_series[name] = filtered
 
     # Export CSVs
     for name, series in haor_series.items():
@@ -500,12 +601,16 @@ def run_haors():
         comparisons = compare_all_haors()
         comp_csv = []
         for name, comp in comparisons.items():
+            p1 = _resolve_ee(comp["period1_avg_km2"])
+            p2 = _resolve_ee(comp["period2_avg_km2"])
+            chg = _resolve_ee(comp["change_km2"])
+            pct = _resolve_ee(comp["change_pct"])
             comp_csv.append({
                 "haor": name,
-                "period1_avg_km2": comp["period1_avg_km2"],
-                "period2_avg_km2": comp["period2_avg_km2"],
-                "change_km2": comp["change_km2"],
-                "change_pct": comp["change_pct"],
+                "period1_avg_km2": p1,
+                "period2_avg_km2": p2,
+                "change_km2": chg,
+                "change_pct": pct,
             })
         export_csv(comp_csv, "haor_period_comparison.csv", "haors")
 
@@ -543,16 +648,12 @@ def run_nightlights():
 
     results = run_nightlights_analysis(region)
 
-    # Export time series
+    # Export time series (batch resolve: 1 call instead of N*3)
     if results.get("time_series"):
-        ts_resolved = []
-        for entry in results["time_series"]:
-            ts_resolved.append({
-                "year": entry["year"],
-                "mean_radiance": _resolve_ee(entry.get("mean_radiance")),
-                "max_radiance": _resolve_ee(entry.get("max_radiance")),
-                "sum_radiance": _resolve_ee(entry.get("sum_radiance")),
-            })
+        ts_resolved = _batch_resolve_list(
+            results["time_series"],
+            ["mean_radiance", "max_radiance", "sum_radiance"],
+        )
         export_csv(ts_resolved, "nightlights_timeseries.csv", "nightlights")
 
     # Export electrification stats
@@ -677,43 +778,34 @@ def run_vegetation():
 
     # Export NDVI time series
     if results.get("ndvi_timeseries"):
-        ts_resolved = []
-        for entry in results["ndvi_timeseries"]:
-            ts_resolved.append({
-                "year": entry["year"],
-                "mean_ndvi": _resolve_ee(entry.get("mean_ndvi")),
-                "max_ndvi": _resolve_ee(entry.get("max_ndvi")),
-            })
+        ts_resolved = _batch_resolve_list(
+            results["ndvi_timeseries"], ["mean_ndvi", "max_ndvi"],
+        )
         export_csv(ts_resolved, "ndvi_timeseries.csv", "vegetation")
 
     # Export seasonal NDVI
     if results.get("seasonal_ndvi"):
-        seasonal_resolved = []
-        for entry in results["seasonal_ndvi"]:
-            resolved = {"year": entry["year"]}
-            for key in ["pre_monsoon_ndvi", "monsoon_ndvi", "post_monsoon_ndvi", "winter_ndvi"]:
-                resolved[key] = _resolve_ee(entry.get(key))
-            seasonal_resolved.append(resolved)
+        seasonal_resolved = _batch_resolve_list(
+            results["seasonal_ndvi"],
+            ["pre_monsoon_ndvi", "monsoon_ndvi", "post_monsoon_ndvi", "winter_ndvi"],
+        )
         export_csv(seasonal_resolved, "seasonal_ndvi.csv", "vegetation")
 
     # Export forest stats
     if results.get("forest_stats"):
         fs = results["forest_stats"]
-        fs_resolved = [{
-            "forest_2000_km2": _resolve_ee(fs.get("forest_2000_km2")),
-            "forest_loss_km2": _resolve_ee(fs.get("forest_loss_km2")),
-            "forest_gain_km2": _resolve_ee(fs.get("forest_gain_km2")),
-        }]
+        fs_resolved = [_batch_resolve_ee({
+            "forest_2000_km2": fs.get("forest_2000_km2"),
+            "forest_loss_km2": fs.get("forest_loss_km2"),
+            "forest_gain_km2": fs.get("forest_gain_km2"),
+        })]
         export_csv(fs_resolved, "forest_stats.csv", "vegetation")
 
-    # Export annual forest loss
+    # Export annual forest loss (batch: 23 years in 1 call)
     if results.get("forest_loss_annual"):
-        loss_resolved = []
-        for entry in results["forest_loss_annual"]:
-            loss_resolved.append({
-                "year": entry["year"],
-                "loss_km2": _resolve_ee(entry.get("loss_km2")),
-            })
+        loss_resolved = _batch_resolve_list(
+            results["forest_loss_annual"], ["loss_km2"],
+        )
         export_csv(loss_resolved, "forest_loss_annual.csv", "vegetation")
 
     # Export cropland area
@@ -868,48 +960,40 @@ def run_climate():
 
     results = run_climate_analysis(region)
 
-    # Export rainfall time series
+    # Export rainfall time series (batch)
     if results.get("rainfall_timeseries"):
-        ts_resolved = []
-        for entry in results["rainfall_timeseries"]:
-            ts_resolved.append({
-                "year": entry["year"],
-                "mean_precip_mm": _resolve_ee(entry.get("mean_precip_mm")),
-                "max_precip_mm": _resolve_ee(entry.get("max_precip_mm")),
-            })
+        ts_resolved = _batch_resolve_list(
+            results["rainfall_timeseries"], ["mean_precip_mm", "max_precip_mm"],
+        )
         export_csv(ts_resolved, "rainfall_timeseries.csv", "climate")
 
-    # Export LST time series
+    # Export LST time series (batch)
     if results.get("lst_timeseries"):
-        lst_resolved = []
-        for entry in results["lst_timeseries"]:
-            lst_resolved.append({
-                "year": entry["year"],
-                "day_lst_c": _resolve_ee(entry.get("day_lst_c")),
-                "night_lst_c": _resolve_ee(entry.get("night_lst_c")),
-            })
+        lst_resolved = _batch_resolve_list(
+            results["lst_timeseries"], ["day_lst_c", "night_lst_c"],
+        )
         export_csv(lst_resolved, "lst_timeseries.csv", "climate")
 
-    # Export UHI results
-    uhi_resolved = []
+    # Export UHI results (batch)
+    uhi_entries = []
     for city, uhi in results.get("uhi", {}).items():
-        uhi_resolved.append({
+        uhi_entries.append({
             "city": city,
-            "urban_lst_c": _resolve_ee(uhi.get("urban_lst_c")),
-            "rural_lst_c": _resolve_ee(uhi.get("rural_lst_c")),
-            "uhi_intensity_c": _resolve_ee(uhi.get("uhi_intensity_c")),
+            "urban_lst_c": uhi.get("urban_lst_c"),
+            "rural_lst_c": uhi.get("rural_lst_c"),
+            "uhi_intensity_c": uhi.get("uhi_intensity_c"),
         })
-    if uhi_resolved:
+    if uhi_entries:
+        uhi_resolved = _batch_resolve_list(
+            uhi_entries, ["urban_lst_c", "rural_lst_c", "uhi_intensity_c"],
+        )
         export_csv(uhi_resolved, "urban_heat_island.csv", "climate")
 
-    # Export monsoon rainfall
+    # Export monsoon rainfall (batch)
     if results.get("monsoon_rainfall"):
-        monsoon_resolved = []
-        for entry in results["monsoon_rainfall"]:
-            monsoon_resolved.append({
-                "year": entry["year"],
-                "monsoon_precip_mm": _resolve_ee(entry.get("monsoon_precip_mm")),
-            })
+        monsoon_resolved = _batch_resolve_list(
+            results["monsoon_rainfall"], ["monsoon_precip_mm"],
+        )
         export_csv(monsoon_resolved, "monsoon_rainfall.csv", "climate")
 
     # Export drought maps
@@ -1637,47 +1721,99 @@ def run_full():
     print("=" * 60)
 
 
+def _run_parallel(tasks, max_workers=4):
+    """Run a list of (name, func) tasks concurrently using threads.
+
+    GEE operations are IO-bound (network), so threading works well.
+    max_workers=4 avoids hitting GEE's concurrent request limits.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(func): name for name, func in tasks}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+                results[name] = "OK"
+                print(f"\n  [DONE] {name}")
+            except Exception as e:
+                results[name] = f"FAILED: {e}"
+                print(f"\n  [FAIL] {name}: {e}")
+    return results
+
+
 def run_full_extended():
-    """Run ALL analysis modules (water + extended + domain-specific)."""
+    """Run ALL analysis modules with parallel execution where possible.
+
+    Dependency graph:
+      Wave 1 (independent): test, nightlights, climate, airquality, vegetation,
+                             landcover, urbanization
+      Wave 2 (depends on wave 1): poverty (needs nightlights+vegetation+urbanization),
+                                   rivers, floods, changes, haors, infrastructure,
+                                   crops, coastal, soil
+      Wave 3 (depends on wave 2): slums (needs poverty), health (needs poverty+airquality),
+                                   energy (needs nightlights+vegetation+poverty)
+    """
     label = cfg.scope_label()
     print("\n" + "=" * 60)
-    print(f"FULL EXTENDED PIPELINE – {label}")
-    print("  Water + Nightlights + Urbanization + Vegetation + Land Cover")
-    print("  + Air Quality + Climate + Poverty + Infrastructure")
-    print("  + Crops + Slums + Coastal + Soil + Health + Energy")
+    print(f"FULL EXTENDED PIPELINE – {label} (PARALLEL)")
     print("=" * 60)
 
     start = time.time()
 
-    # Original water modules
-    run_test()
-    run_rivers()
-    run_floods()
-    run_changes()
-    run_haors()
+    # Single GEE init for all modules
+    init_gee()
 
-    # Extended modules
-    run_nightlights()
-    run_urbanization()
-    run_vegetation()
-    run_landcover()
-    run_airquality()
-    run_climate()
-    run_poverty()
-    run_infrastructure()
+    # Wave 1: fully independent modules (no cross-dependencies)
+    print("\n── Wave 1: Independent modules (parallel) ──")
+    wave1 = [
+        ("test", run_test),
+        ("nightlights", run_nightlights),
+        ("climate", run_climate),
+        ("airquality", run_airquality),
+        ("vegetation", run_vegetation),
+        ("landcover", run_landcover),
+        ("urbanization", run_urbanization),
+    ]
+    w1 = _run_parallel(wave1, max_workers=4)
 
-    # Domain-specific modules
-    run_crops()
-    run_slums()
-    run_coastal()
-    run_soil()
-    run_health()
-    run_energy()
+    # Wave 2: modules that depend on wave 1 outputs
+    print("\n── Wave 2: Dependent modules (parallel) ──")
+    wave2 = [
+        ("poverty", run_poverty),
+        ("rivers", run_rivers),
+        ("floods", run_floods),
+        ("changes", run_changes),
+        ("haors", run_haors),
+        ("infrastructure", run_infrastructure),
+        ("crops", run_crops),
+        ("coastal", run_coastal),
+        ("soil", run_soil),
+    ]
+    w2 = _run_parallel(wave2, max_workers=4)
+
+    # Wave 3: modules that depend on wave 2
+    print("\n── Wave 3: Final modules (parallel) ──")
+    wave3 = [
+        ("slums", run_slums),
+        ("health", run_health),
+        ("energy", run_energy),
+    ]
+    w3 = _run_parallel(wave3, max_workers=3)
 
     elapsed = (time.time() - start) / 60
+    all_results = {**w1, **w2, **w3}
+    failed = {k: v for k, v in all_results.items() if v != "OK"}
+
     print(f"\n{'=' * 60}")
     print(f"FULL EXTENDED PIPELINE COMPLETE – {elapsed:.1f} minutes")
     print(f"  Scope: {label}")
+    print(f"  Modules: {len(all_results)} total, {len(all_results) - len(failed)} OK, {len(failed)} failed")
+    if failed:
+        for name, err in failed.items():
+            print(f"  FAILED: {name} – {err}")
     print(f"  All outputs saved to: {cfg.OUTPUT_DIR}")
     print("=" * 60)
 

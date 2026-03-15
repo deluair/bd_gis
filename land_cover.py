@@ -140,7 +140,7 @@ def compute_dw_class_timeseries(region, start_year=2016, end_year=2024, step=1):
             stats = probs.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=region,
-                scale=100,
+                scale=300 if cfg.SCOPE == "national" else 100,
                 maxPixels=cfg.MAX_PIXELS,
                 bestEffort=True,
             )

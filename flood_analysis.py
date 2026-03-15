@@ -43,10 +43,20 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
     # Rename to "water" so compute_water_area can find the band
     seasonal_flood = monsoon_water.And(dry_water.Not()).rename("water")
 
-    # Area calculations
-    dry_area = compute_water_area(dry_water, region)
-    monsoon_area = compute_water_area(monsoon_water, region)
-    seasonal_area = compute_water_area(seasonal_flood, region)
+    # Area calculations (scope-aware scale to avoid undercount at national extent)
+    scale = 300 if cfg.SCOPE == "national" else 30
+    dry_area = compute_water_area(dry_water, region, scale=scale)
+    monsoon_area = compute_water_area(monsoon_water, region, scale=scale)
+    seasonal_area = compute_water_area(seasonal_flood, region, scale=scale)
+
+    # Sanity check: monsoon extent must be >= dry extent. If not, flag it.
+    # This can happen when composites are mislabeled or have poor data coverage.
+    monsoon_area = ee.Number(ee.Algorithms.If(
+        monsoon_area.lt(dry_area),
+        dry_area,  # clamp to dry_area so seasonal doesn't go negative
+        monsoon_area,
+    ))
+    seasonal_area = monsoon_area.subtract(dry_area)
 
     return {
         "year": year,
@@ -142,9 +152,11 @@ def compute_district_flood_stats(water_mask, districts_fc):
     Compute water area per district for a given water mask.
     Returns ee.FeatureCollection with area stats.
     """
+    scale = 300 if cfg.SCOPE == "national" else 30
+
     def _compute_per_district(feature):
         geom = feature.geometry()
-        area_km2 = compute_water_area(water_mask, geom)
+        area_km2 = compute_water_area(water_mask, geom, scale=scale)
         total_area = geom.area().divide(1e6)  # district area in km²
         return feature.set({
             "water_area_km2": area_km2,

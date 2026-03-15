@@ -58,22 +58,34 @@ def get_decadal_water_mask(year, river_roi, window=2):
     reliable Otsu histogram thresholding.
     """
     import datetime
-    start = f"{year - window}-12-01"
+    # Widen window for the earliest decade: Landsat 5 coverage over Bangladesh
+    # is sparse before 1988, so the default ±2yr window around 1985 yields
+    # mostly masked pixels, causing the 1985-1995 erosion period to be all zeros.
+    effective_window = window if year >= 1990 else max(window, 5)
+    start = f"{year - effective_window}-12-01"
     # Clamp end date to today so we never query into the future
     max_end = datetime.date.today().isoformat()
-    end = min(f"{year + window}-02-28", max_end)
+    end = min(f"{year + effective_window}-02-28", max_end)
+    # Clamp start to Landsat 5 launch (1984-03-01)
+    if start < "1984-03-01":
+        start = "1984-03-01"
     col = get_landsat_collection(start, end, river_roi)
 
     # Guard against empty collections (e.g. for very recent years)
     col_size = _getinfo_with_timeout(col.size())
     if col_size == 0:
         # Fall back to a wider window
-        start = f"{year - window - 2}-12-01"
+        start = f"{max(year - effective_window - 2, 1984)}-03-01"
         end = max_end
         col = get_landsat_collection(start, end, river_roi)
 
     composite = make_composite(col, method="median")
-    return classify_water(composite, region=river_roi, method="fixed")
+    water = classify_water(composite, region=river_roi, method="fixed")
+    # Unmask to 0 so that masked pixels are treated as non-water in
+    # downstream .And() / .subtract() operations. Without this, masked
+    # pixels propagate as masked through change detection and the
+    # reduceRegion sum returns null/0.
+    return water.unmask(0)
 
 
 def extract_centerline(water_mask, river_roi, scale=30):
@@ -157,7 +169,10 @@ def compute_erosion_area(eroded_mask, region, scale=30):
         maxPixels=cfg.MAX_PIXELS,
         bestEffort=True,
     )
-    return ee.Number(area.get("eroded")).divide(10000)  # m² to ha
+    # Guard against null result (e.g. when reduceRegion returns None for
+    # the band due to computation limits or fully masked input)
+    raw = area.get("eroded")
+    return ee.Number(ee.Algorithms.If(raw, raw, 0)).divide(10000)  # m² to ha
 
 
 def compute_erosion_rate(eroded_mask, region, years_elapsed, scale=30):
@@ -177,6 +192,21 @@ def identify_erosion_hotspots(migrations, river_roi, scale=30):
     return hotspot.rename("erosion_frequency")
 
 
+def _scale_for_river(river_name):
+    """Choose reduceRegion scale based on river buffer size.
+
+    Large-buffer rivers (>=8000m) cover huge areas. At scale=30, the
+    reduceRegion call exceeds GEE computation limits and silently returns
+    null/0. Use coarser scale for these rivers to stay within limits.
+    """
+    buffer_m = cfg.RIVERS[river_name]["buffer_m"]
+    if buffer_m >= 8000:
+        return 300
+    if buffer_m >= 5000:
+        return 100
+    return 30
+
+
 def run_river_analysis(river_name):
     """
     Full river analysis pipeline for a single river.
@@ -184,6 +214,7 @@ def run_river_analysis(river_name):
     """
     river_roi = get_river_roi(river_name)
     decades = cfg.DECADES
+    scale = _scale_for_river(river_name)
 
     # Water masks per decade
     water_masks = {}
@@ -205,7 +236,7 @@ def run_river_analysis(river_name):
     rates = []
     for m in migrations:
         years_elapsed = m["end_year"] - m["start_year"]
-        rate = compute_erosion_rate(m["eroded"], river_roi, years_elapsed)
+        rate = compute_erosion_rate(m["eroded"], river_roi, years_elapsed, scale)
         rates.append({"period": m["period"], "rate_ha_per_year": rate})
 
     return {

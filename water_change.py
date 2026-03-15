@@ -230,7 +230,7 @@ def validate_against_jrc(our_occurrence, region=None, scale=300):
     return correlation
 
 
-def compute_area_stats(persistence_image, region, scale=30):
+def compute_area_stats(persistence_image, region, scale=300 if cfg.SCOPE == "national" else 30):
     """
     Compute area (km²) for each water persistence category.
     """

@@ -152,11 +152,13 @@ def get_forest_loss_year(region):
     return gfc.select("lossyear").clip(region)
 
 
-def compute_forest_stats(region, tree_threshold=30, scale=30):
+def compute_forest_stats(region, tree_threshold=30, scale=None):
     """
     Compute forest cover stats: initial cover, loss, gain, net change.
     tree_threshold: minimum canopy cover % to consider as forest.
     """
+    if scale is None:
+        scale = 300 if cfg.SCOPE == "national" else 30
     gfc = ee.Image(cfg.GLOBAL_FOREST_CHANGE["image"]).clip(region)
     tree2000 = gfc.select("treecover2000")
     loss = gfc.select("loss")
@@ -185,8 +187,10 @@ def compute_forest_stats(region, tree_threshold=30, scale=30):
     }
 
 
-def compute_forest_loss_by_year(region, tree_threshold=30, scale=30):
+def compute_forest_loss_by_year(region, tree_threshold=30, scale=None):
     """Compute annual forest loss area from Hansen loss year band."""
+    if scale is None:
+        scale = 300 if cfg.SCOPE == "national" else 30
     gfc = ee.Image(cfg.GLOBAL_FOREST_CHANGE["image"]).clip(region)
     lossyear = gfc.select("lossyear")
     tree2000 = gfc.select("treecover2000").gte(tree_threshold)
@@ -279,7 +283,7 @@ def run_vegetation_analysis(region):
         cropland = detect_cropland(region)
         crop_area = cropland.multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=region,
-            scale=100, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
+            scale=300 if cfg.SCOPE == "national" else 100, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
         )
         results["cropland_area_km2"] = ee.Number(crop_area.get("cropland")).divide(1e6)
         results["cropland_mask"] = cropland

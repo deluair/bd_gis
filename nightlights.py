@@ -5,6 +5,22 @@ for tracking electrification, economic activity, and urbanization patterns.
 import ee
 import config as cfg
 
+# Sensor-specific "lit" thresholds for electrification classification.
+# DMSP-OLS: digital number 0-63, typical lit threshold is DN > 3.
+# VIIRS DNB: radiance in nW/cm2/sr, typical lit threshold is > 0.5.
+DMSP_LIT_THRESHOLD = 3.0
+VIIRS_LIT_THRESHOLD = 0.5
+
+
+def _sensor_for_year(year):
+    """Return sensor name for a given year."""
+    return "DMSP-OLS" if year <= 2013 else "VIIRS-DNB"
+
+
+def _lit_threshold_for_year(year):
+    """Return sensor-appropriate lit threshold for a given year."""
+    return DMSP_LIT_THRESHOLD if year <= 2013 else VIIRS_LIT_THRESHOLD
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data Loading
@@ -60,6 +76,7 @@ def compute_light_stats(year, region, scale=1000):
     )
     return {
         "year": year,
+        "sensor": _sensor_for_year(year),
         "mean_radiance": stats.get(f"{band_name}_mean"),
         "max_radiance": stats.get(f"{band_name}_max"),
         "sum_radiance": stats.get(f"{band_name}_sum"),
@@ -88,11 +105,16 @@ def compute_light_change(year1, year2, region):
     return diff.addBands(relative)
 
 
-def classify_electrification(year, region, threshold=1.0):
+def classify_electrification(year, region, threshold=None):
     """
     Binary electrification map: lit (radiance > threshold) vs unlit.
-    Returns {electrified_mask, lit_area_km2, unlit_area_km2}.
+    If threshold is None, uses sensor-appropriate default:
+      DMSP-OLS (<=2013): DN > 3.0
+      VIIRS-DNB (2014+): radiance > 0.5 nW/cm2/sr
+    Returns {mask, lit_area_km2, year, sensor}.
     """
+    if threshold is None:
+        threshold = _lit_threshold_for_year(year)
     lights = get_nightlights(year, region)
     band_name = cfg.DMSP_OLS["band"] if year <= 2013 else cfg.VIIRS_DNB["band"]
     lit = lights.select(band_name).gt(threshold).rename("electrified")
@@ -108,6 +130,7 @@ def classify_electrification(year, region, threshold=1.0):
         "mask": lit,
         "lit_area_km2": ee.Number(lit_area.get("electrified")).divide(1e6),
         "year": year,
+        "sensor": _sensor_for_year(year),
     }
 
 
