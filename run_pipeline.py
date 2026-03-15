@@ -31,6 +31,7 @@ Usage:
     python run_pipeline.py --alerts                     # Year-over-year change detection alerts
     python run_pipeline.py --alerts --alerts-year 2022  # Alerts for a specific year
     python run_pipeline.py --full-extended              # ALL modules (water + extended)
+    python run_pipeline.py --local                     # Local analysis on downloaded data (no GEE)
 """
 import argparse
 import os
@@ -2333,6 +2334,31 @@ def run_full_extended():
     print("=" * 60)
 
 
+def run_local():
+    """Run local analysis on downloaded satellite data (no GEE required)."""
+    from local_compute import run_local_analysis
+
+    results = run_local_analysis()
+    ensure_output_dir("local")
+
+    if results.get("forest_stats"):
+        export_csv([results["forest_stats"]], "forest_stats.csv", "local")
+
+    if results.get("forest_loss_annual"):
+        export_csv(results["forest_loss_annual"], "forest_loss_annual.csv", "local")
+
+    if results.get("water_stats"):
+        export_csv([results["water_stats"]], "water_stats.csv", "local")
+
+    if results.get("rainfall_stats"):
+        export_csv([results["rainfall_stats"]], "rainfall_stats.csv", "local")
+
+    if results.get("population_stats"):
+        export_csv([results["population_stats"]], "population_stats.csv", "local")
+
+    print(f"\nLocal outputs saved to: {os.path.join(cfg.OUTPUT_DIR, 'local')}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Bangladesh Geospatial Analysis Pipeline"
@@ -2380,6 +2406,8 @@ def main():
     parser.add_argument("--alerts-year", type=int, default=None, metavar="YEAR",
                         help="Year for alerts (default: 2023)")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
+    parser.add_argument("--local", action="store_true",
+                        help="Run local analysis on downloaded satellite data (no GEE)")
 
     args = parser.parse_args()
 
@@ -2392,7 +2420,9 @@ def main():
     print(f"Scope: {cfg.scope_label()} | Threshold: {cfg.DEFAULT_THRESHOLD_METHOD} | "
           f"Rivers: {len(cfg.RIVERS)} | Wetlands: {len(cfg.HAORS)}")
 
-    if args.full_extended:
+    if args.local:
+        run_local()
+    elif args.full_extended:
         run_full_extended()
     elif args.full:
         run_full()
