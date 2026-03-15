@@ -1832,6 +1832,75 @@ def run_energy():
     print("\nEnergy potential analysis complete.")
 
 
+def run_groundwater():
+    """Groundwater depletion analysis using GRACE satellite gravity data."""
+    from groundwater import run_groundwater_analysis
+
+    print("\n" + "=" * 60)
+    print(f"GROUNDWATER DEPLETION (GRACE) – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("groundwater")
+
+    results = run_groundwater_analysis(region)
+
+    # Export TWS time series
+    if results.get("tws_timeseries"):
+        ts_resolved = _batch_resolve_list(
+            results["tws_timeseries"],
+            ["mean_tws_cm", "min_tws_cm", "max_tws_cm"],
+        )
+        export_csv(ts_resolved, "grace_tws_timeseries.csv", "groundwater")
+
+    # Export groundwater anomaly decomposition
+    if results.get("groundwater_anomaly"):
+        gws_resolved = _batch_resolve_list(
+            results["groundwater_anomaly"],
+            ["tws_cm", "sm_cm", "sw_cm", "gws_cm"],
+        )
+        export_csv(gws_resolved, "groundwater_anomaly_timeseries.csv", "groundwater")
+
+    # Export TWS trend map (per-pixel slope)
+    trend_map = results.get("tws_trend_map")
+    if trend_map is not None:
+        try:
+            export_to_drive(
+                trend_map.select("tws_slope_cm_per_month").toFloat(),
+                "grace_tws_trend_2002_2017", region=region,
+            )
+        except Exception as e:
+            print(f"  Export TWS trend map skipped: {e}")
+
+    # Export depletion hotspot mask
+    hotspot_data = results.get("depletion_hotspots")
+    if hotspot_data:
+        try:
+            export_to_drive(
+                hotspot_data["hotspot_mask"].toFloat(),
+                "groundwater_depletion_hotspots", region=region,
+            )
+        except Exception as e:
+            print(f"  Export hotspot mask skipped: {e}")
+
+        # Export per-hotspot stats
+        if hotspot_data.get("hotspot_stats"):
+            hotspot_rows = []
+            for name, stats in hotspot_data["hotspot_stats"].items():
+                hotspot_rows.append({
+                    "hotspot": name,
+                    "lat": stats.get("lat"),
+                    "lon": stats.get("lon"),
+                    "mean_slope_cm_per_month": _resolve_ee(stats.get("mean_slope_cm_per_month")),
+                    "min_slope_cm_per_month": _resolve_ee(stats.get("min_slope_cm_per_month")),
+                    "depleting_area_m2": _resolve_ee(stats.get("depleting_area_m2")),
+                })
+            export_csv(hotspot_rows, "groundwater_hotspot_stats.csv", "groundwater")
+
+    print("\nGroundwater depletion analysis complete.")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Full Pipeline Runners
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1886,7 +1955,7 @@ def run_full_extended():
 
     Dependency graph:
       Wave 1 (independent): test, nightlights, climate, airquality, vegetation,
-                             landcover, urbanization
+                             landcover, urbanization, groundwater
       Wave 2 (depends on wave 1): poverty (needs nightlights+vegetation+urbanization),
                                    rivers, floods, changes, haors, infrastructure,
                                    crops, coastal, soil
@@ -1913,6 +1982,7 @@ def run_full_extended():
         ("vegetation", run_vegetation),
         ("landcover", run_landcover),
         ("urbanization", run_urbanization),
+        ("groundwater", run_groundwater),
     ]
     w1 = _run_parallel(wave1, max_workers=4)
 
@@ -1994,6 +2064,7 @@ def main():
     parser.add_argument("--health", action="store_true", help="Health risk proxy mapping")
     parser.add_argument("--energy", action="store_true", help="Renewable energy potential")
     parser.add_argument("--transport", action="store_true", help="Transportation & connectivity gap")
+    parser.add_argument("--groundwater", action="store_true", help="Groundwater depletion (GRACE)")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -2052,6 +2123,8 @@ def main():
         run_energy()
     elif args.transport:
         run_transport()
+    elif args.groundwater:
+        run_groundwater()
     else:
         run_test()
 
