@@ -209,7 +209,7 @@ def compute_population_stats_local():
     """
     t0 = time.perf_counter()
 
-    pop_path = _find_file("*worldpop*")
+    pop_path = _find_file("*bgd_ppp*") or _find_file("*worldpop*")
     pop, _, px_area = _read_bd(pop_path)
 
     # WorldPop uses nodata values (often -99999 or very negative)
