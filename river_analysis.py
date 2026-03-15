@@ -14,20 +14,17 @@ class GEETimeoutError(Exception):
     pass
 
 
-def _timeout_handler(signum, frame):
-    raise GEETimeoutError("GEE call timed out")
-
-
 def _getinfo_with_timeout(ee_obj, timeout=GEE_TIMEOUT):
-    """Call getInfo() with a timeout to prevent indefinite hangs."""
-    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(timeout)
-    try:
-        result = ee_obj.getInfo()
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-    return result
+    """Thread-safe getInfo() with timeout using concurrent.futures."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(ee_obj.getInfo)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeout:
+            raise GEETimeoutError("GEE call timed out")
+        except Exception:
+            raise
 from data_acquisition import (
     get_study_area, get_landsat_collection, make_composite
 )

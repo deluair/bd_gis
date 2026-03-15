@@ -39,22 +39,21 @@ sys.path.insert(0, os.path.dirname(__file__))
 import config as cfg
 
 
+def _getinfo_with_timeout(ee_obj, timeout=300):
+    """Thread-safe getInfo() with timeout using concurrent.futures."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(ee_obj.getInfo)
+        try:
+            return future.result(timeout=timeout)
+        except (FuturesTimeout, Exception):
+            return None
+
+
 def _resolve_ee(val, timeout=300):
     """Resolve ee.Number/ComputedObject to Python float, or return as-is."""
-    import signal
     if isinstance(val, (ee.Number, ee.ComputedObject)):
-        def _handler(signum, frame):
-            raise TimeoutError("GEE getInfo() timed out")
-        old = signal.signal(signal.SIGALRM, _handler)
-        signal.alarm(timeout)
-        try:
-            result = val.getInfo()
-        except Exception:
-            result = None
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old)
-        return result
+        return _getinfo_with_timeout(val, timeout)
     return val
 
 
@@ -67,7 +66,6 @@ def _batch_resolve_ee(data, timeout=600):
     Batches all ee.ComputedObject values into one ee.Dictionary.getInfo()
     call, reducing N network roundtrips to 1.
     """
-    import signal
     ee_keys = []
     ee_vals = {}
     plain = {}
@@ -81,17 +79,9 @@ def _batch_resolve_ee(data, timeout=600):
     if not ee_keys:
         return dict(plain)
 
-    def _handler(signum, frame):
-        raise TimeoutError("Batch GEE getInfo() timed out")
-    old = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(timeout)
-    try:
-        batch = ee.Dictionary(ee_vals).getInfo()
-    except Exception:
+    batch = _getinfo_with_timeout(ee.Dictionary(ee_vals), timeout)
+    if batch is None:
         batch = {k: None for k in ee_keys}
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
 
     result = dict(plain)
     result.update(batch)
@@ -107,8 +97,6 @@ def _batch_resolve_list(entries, ee_fields, timeout=600):
 
     Instead of N*M getInfo() calls (N entries, M fields each), this does 1 call.
     """
-    import signal
-    # Build a flat dict of all ee values: "idx_field" -> ee_value
     ee_batch = {}
     for i, entry in enumerate(entries):
         for f in ee_fields:
@@ -119,17 +107,9 @@ def _batch_resolve_list(entries, ee_fields, timeout=600):
     if not ee_batch:
         return [dict(e) for e in entries]
 
-    def _handler(signum, frame):
-        raise TimeoutError("Batch list GEE getInfo() timed out")
-    old = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(timeout)
-    try:
-        resolved = ee.Dictionary(ee_batch).getInfo()
-    except Exception:
+    resolved = _getinfo_with_timeout(ee.Dictionary(ee_batch), timeout)
+    if resolved is None:
         resolved = {k: None for k in ee_batch}
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
 
     result = []
     for i, entry in enumerate(entries):
@@ -262,25 +242,17 @@ def run_rivers():
     init_gee()
     ensure_output_dir("rivers")
 
-    import signal
-
-    def _river_timeout_handler(signum, frame):
-        raise TimeoutError("River analysis timed out")
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
     for river_name in cfg.RIVERS:
         print(f"\n── {river_name} River ──")
-        old_handler = signal.signal(signal.SIGALRM, _river_timeout_handler)
-        signal.alarm(600)  # 10 min max per river
-        try:
-            results = run_river_analysis(river_name)
-        except Exception as e:
-            print(f"  FAILED: {e}")
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-            continue
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run_river_analysis, river_name)
+            try:
+                results = future.result(timeout=600)
+            except (FuturesTimeout, Exception) as e:
+                print(f"  FAILED: {e}")
+                continue
 
         # Export centerlines
         for year, cl in results["centerlines"].items():
