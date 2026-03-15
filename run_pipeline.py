@@ -1903,6 +1903,90 @@ def run_aquaculture():
     print("\nAquaculture analysis complete.")
 
 
+def run_kilns():
+    """Brick kiln detection, density mapping, and emission estimation."""
+    from brick_kiln import run_brick_kiln_analysis
+
+    print("\n" + "=" * 60)
+    print(f"BRICK KILN DETECTION – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("kilns")
+
+    results = run_brick_kiln_analysis(region)
+
+    # Export thermal hotspot mask
+    thermal = results.get("thermal_2023", {})
+    if thermal.get("hotspot_mask"):
+        try:
+            export_to_drive(
+                thermal["hotspot_mask"].toFloat(),
+                "kiln_thermal_hotspots_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export thermal hotspots skipped: {e}")
+
+    # Export thermal stats CSV
+    if thermal.get("hotspot_area_km2") is not None:
+        export_csv([{
+            "year": thermal.get("year", 2023),
+            "hotspot_area_km2": _resolve_ee(thermal["hotspot_area_km2"]),
+            "mean_lst_c": _resolve_ee(thermal.get("mean_lst_c")),
+            "stddev_lst_c": _resolve_ee(thermal.get("stddev_lst_c")),
+            "threshold_lst_c": _resolve_ee(thermal.get("threshold_lst_c")),
+        }], "kiln_thermal_stats_2023.csv", "kilns")
+
+    # Export spectral kiln candidate mask
+    spectral = results.get("spectral_2023", {})
+    if spectral.get("kiln_in_zones_mask"):
+        try:
+            export_to_drive(
+                spectral["kiln_in_zones_mask"].toFloat(),
+                "kiln_spectral_candidates_2023", region=region,
+            )
+        except Exception as e:
+            print(f"  Export spectral candidates skipped: {e}")
+
+    if spectral.get("candidate_area_km2") is not None:
+        export_csv([{
+            "year": spectral.get("year", 2023),
+            "candidate_area_km2": _resolve_ee(spectral["candidate_area_km2"]),
+        }], "kiln_spectral_area_2023.csv", "kilns")
+
+    # Export density by district
+    density = results.get("density_2023", {})
+    if density.get("density_by_district"):
+        try:
+            export_fc_to_csv(density["density_by_district"], "kiln_density_by_district_2023.csv", "kilns")
+        except Exception as e:
+            print(f"  Export kiln density skipped: {e}")
+
+    # Export kiln timeseries
+    if results.get("timeseries"):
+        ts_resolved = _batch_resolve_list(
+            results["timeseries"],
+            ["hotspot_area_km2", "spectral_candidate_area_km2", "threshold_lst_c", "mean_lst_c"],
+        )
+        export_csv(ts_resolved, "kiln_timeseries_2015_2023.csv", "kilns")
+
+    # Export emission estimates
+    emissions = results.get("emissions_2023", {})
+    if emissions:
+        export_csv([{
+            "year": 2023,
+            "candidate_area_km2": _resolve_ee(emissions.get("input_area_km2")),
+            "avg_kiln_footprint_km2": emissions.get("avg_kiln_footprint_km2"),
+            "estimated_kiln_count": _resolve_ee(emissions.get("estimated_kiln_count")),
+            "co2_tonnes_per_year": _resolve_ee(emissions.get("co2_tonnes_per_year")),
+            "pm25_tonnes_per_year": _resolve_ee(emissions.get("pm25_tonnes_per_year")),
+            "note": emissions.get("note", ""),
+        }], "kiln_emission_estimates_2023.csv", "kilns")
+
+    print("\nBrick kiln analysis complete.")
+
+
 def run_groundwater():
     """Groundwater depletion analysis using GRACE satellite gravity data."""
     from groundwater import run_groundwater_analysis
