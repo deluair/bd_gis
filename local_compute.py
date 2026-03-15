@@ -41,12 +41,17 @@ def _read_bd(path):
 
 
 def _find_file(pattern, subdir=None):
-    """Find a single file matching a glob pattern under LOCAL_DATA."""
+    """Find a single file matching a glob pattern under LOCAL_DATA.
+
+    Prefers *_bd.tif (clipped to Bangladesh) over raw global tiles.
+    """
     base = LOCAL_DATA / subdir if subdir else LOCAL_DATA
     matches = sorted(base.glob(pattern))
     if not matches:
         raise FileNotFoundError(f"No file matching '{pattern}' in {base}")
-    return matches[0]
+    # Prefer BD-clipped files
+    bd_matches = [m for m in matches if "_bd" in m.stem]
+    return bd_matches[0] if bd_matches else matches[0]
 
 
 # =============================================================================
