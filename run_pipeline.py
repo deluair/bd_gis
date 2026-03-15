@@ -1972,6 +1972,96 @@ def run_groundwater():
     print("\nGroundwater depletion analysis complete.")
 
 
+def run_chars():
+    """Char (river island) detection and land accretion analysis."""
+    from char_accretion import run_char_accretion_analysis
+
+    print("\n" + "=" * 60)
+    print(f"CHAR & LAND ACCRETION ANALYSIS – {cfg.scope_label()}")
+    print(f"  Zones: {list(cfg.ACCRETION_ZONES.keys())}")
+    print("=" * 60)
+
+    init_gee()
+    ensure_output_dir("chars")
+
+    for zone_name, zone_cfg in cfg.ACCRETION_ZONES.items():
+        print(f"\n── {zone_name} ──")
+        zone_slug = zone_name.lower().replace(" ", "_").replace("-", "_")
+        try:
+            region = ee.Geometry.Rectangle([
+                zone_cfg["west"], zone_cfg["south"],
+                zone_cfg["east"], zone_cfg["north"],
+            ])
+            results = run_char_accretion_analysis(region)
+        except Exception as e:
+            print(f"  FAILED: {e}")
+            continue
+
+        ts_resolved = []
+        for entry in results.get("timeseries", []):
+            ts_resolved.append({
+                "period": entry["period"],
+                "start_year": entry["start_year"],
+                "end_year": entry["end_year"],
+                "new_land_km2": _resolve_ee(entry.get("new_land_km2")),
+                "rate_km2_per_year": _resolve_ee(entry.get("rate_km2_per_year")),
+            })
+        export_csv(ts_resolved, f"{zone_slug}_accretion_timeseries.csv", "chars")
+
+        if results.get("new_land_recent"):
+            try:
+                export_to_drive(
+                    results["new_land_recent"].toFloat(),
+                    f"{zone_slug}_new_land_{results['recent_period'].replace('-', '_')}",
+                    region=region,
+                )
+            except Exception as e:
+                print(f"  Export new land mask skipped: {e}")
+
+        if results.get("new_land_cumulative"):
+            try:
+                export_to_drive(
+                    results["new_land_cumulative"].toFloat(),
+                    f"{zone_slug}_new_land_cumulative_1985_2025",
+                    region=region,
+                )
+            except Exception as e:
+                print(f"  Export cumulative mask skipped: {e}")
+
+        if results.get("major_chars"):
+            try:
+                export_fc_to_csv(
+                    results["major_chars"],
+                    f"{zone_slug}_major_chars_{results['recent_period'].replace('-', '_')}.csv",
+                    "chars",
+                )
+            except Exception as e:
+                print(f"  Export major chars skipped: {e}")
+
+        vuln = results.get("vulnerability")
+        if vuln:
+            vuln_area = _resolve_ee(vuln.get("vulnerable_area_km2"))
+            mean_occ = _resolve_ee(vuln.get("mean_flood_occurrence"))
+            export_csv([{
+                "zone": zone_name,
+                "period": results.get("recent_period", ""),
+                "vulnerable_area_km2": vuln_area,
+                "mean_flood_occurrence_pct": mean_occ,
+            }], f"{zone_slug}_vulnerability.csv", "chars")
+
+            if vuln.get("flood_freq"):
+                try:
+                    export_to_drive(
+                        vuln["flood_freq"].toFloat(),
+                        f"{zone_slug}_flood_freq_on_new_land",
+                        region=region,
+                    )
+                except Exception as e:
+                    print(f"  Export flood freq skipped: {e}")
+
+    print("\nChar accretion analysis complete.")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Full Pipeline Runners
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2138,6 +2228,8 @@ def main():
     parser.add_argument("--transport", action="store_true", help="Transportation & connectivity gap")
     parser.add_argument("--groundwater", action="store_true", help="Groundwater depletion (GRACE)")
     parser.add_argument("--aquaculture", action="store_true", help="Aquaculture pond mapping")
+    parser.add_argument("--kilns", action="store_true", help="Brick kiln detection & emission estimates")
+    parser.add_argument("--chars", action="store_true", help="Char / land accretion analysis")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -2200,6 +2292,10 @@ def main():
         run_groundwater()
     elif args.aquaculture:
         run_aquaculture()
+    elif args.chars:
+        run_chars()
+    elif args.kilns:
+        run_kilns()
     else:
         run_test()
 
