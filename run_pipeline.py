@@ -1690,6 +1690,8 @@ def main():
         choices=["sylhet", "national", "barishal", "chattogram", "dhaka",
                  "khulna", "mymensingh", "rajshahi", "rangpur"],
         help="Processing scope (default: from config)")
+    parser.add_argument("--district", default=None,
+        help="Run on a single district (e.g., Dhaka, Comilla, Sylhet)")
 
     # Original modules
     parser.add_argument("--test", action="store_true", help="Quick test run")
@@ -1721,7 +1723,9 @@ def main():
     args = parser.parse_args()
 
     # Set scope if provided via CLI
-    if args.scope:
+    if args.district:
+        cfg.set_scope(f"district:{args.district}")
+    elif args.scope:
         cfg.set_scope(args.scope)
 
     print(f"Scope: {cfg.scope_label()} | Threshold: {cfg.DEFAULT_THRESHOLD_METHOD} | "

@@ -480,17 +480,20 @@ def set_scope(scope):
     global SCOPE, STUDY_AREA_BOUNDS, DISTRICTS, HAORS, RIVERS
     global MAX_PIXELS, DEFAULT_THRESHOLD_METHOD
     SCOPE = scope
+    is_district = scope.startswith("district:")
     STUDY_AREA_BOUNDS = SYLHET_BOUNDS if scope == "sylhet" else NATIONAL_BOUNDS
     DISTRICTS = SYLHET_DISTRICTS if scope == "sylhet" else None
     HAORS = SYLHET_HAORS if scope == "sylhet" else NATIONAL_WETLANDS
     RIVERS = SYLHET_RIVERS if scope == "sylhet" else NATIONAL_RIVERS
-    MAX_PIXELS = 1e12 if scope != "sylhet" else 1e10
-    DEFAULT_THRESHOLD_METHOD = "fixed" if scope == "national" else "otsu"
+    MAX_PIXELS = 1e9 if is_district else (1e12 if scope != "sylhet" else 1e10)
+    DEFAULT_THRESHOLD_METHOD = "otsu" if (is_district or scope == "sylhet") else "fixed"
 
 
 def scope_label():
     """Human-readable label for the current scope."""
-    if SCOPE == "sylhet":
+    if SCOPE.startswith("district:"):
+        return f"{SCOPE.split(':', 1)[1]} District, Bangladesh"
+    elif SCOPE == "sylhet":
         return "Sylhet Haor Wetlands"
     elif SCOPE == "national":
         return "Bangladesh"

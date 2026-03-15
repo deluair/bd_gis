@@ -34,10 +34,10 @@ def get_chirps_monthly(year, month, region):
     return col.sum().clip(region).rename("monthly_precip_mm")
 
 
-def compute_rainfall_timeseries(region, start_year=1985, end_year=2024, scale=5000):
+def compute_rainfall_timeseries(region, start_year=1985, end_year=2024, step=1, scale=5000):
     """Compute annual total and mean rainfall over time."""
     series = []
-    for year in range(start_year, end_year + 1):
+    for year in range(start_year, end_year + 1, step):
         try:
             annual = get_chirps_annual(year, region)
             stats = annual.reduceRegion(

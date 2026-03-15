@@ -47,12 +47,24 @@ def get_division_boundaries_all():
     )
 
 
+def get_district_boundary(district_name):
+    """Return a district boundary from FAO GAUL Level 2."""
+    return (
+        ee.FeatureCollection(cfg.ADMIN_L2)
+        .filter(ee.Filter.eq("ADM0_NAME", cfg.COUNTRY_NAME))
+        .filter(ee.Filter.eq("ADM2_NAME", district_name))
+        .geometry()
+    )
+
+
 def get_study_area():
     """Return ee.Geometry for the active study area based on scope."""
     if cfg.SCOPE == "national":
         return get_country_boundary()
+    elif cfg.SCOPE.startswith("district:"):
+        district_name = cfg.SCOPE.split(":", 1)[1]
+        return get_district_boundary(district_name)
     elif cfg.SCOPE in cfg.DIVISIONS:
-        # Try to load division boundary; capitalize first letter
         div_name = cfg.SCOPE.title()
         return get_division_boundary(div_name)
     else:
