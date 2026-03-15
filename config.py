@@ -383,6 +383,42 @@ MODIS_LST = {
     "years": (2000, 2025),
 }
 
+# ── Groundwater / GRACE ────────────────────────────────────────────────────
+GRACE_MASCON = {
+    "collection": "NASA/GRACE/MASS_GRIDS/MASCON_CRI",
+    "band": "lwe_thickness",       # liquid water equivalent thickness, cm
+    "scale": 25000,                # native ~333km, but 25km works for regional stats
+    "years": (2002, 2017),         # GRACE operational period (gaps exist)
+    "ref_period": (2004, 2009),    # GRACE anomaly baseline (matches NASA convention)
+}
+GLDAS_NOAH = {
+    "collection": "NASA/GLDAS/V021/NOAH/G025/T3H",
+    "soil_moisture_bands": [
+        "SoilMoi0_10cm_inst",      # 0-10 cm  (kg/m2 = mm)
+        "SoilMoi10_40cm_inst",     # 10-40 cm
+        "SoilMoi40_100cm_inst",    # 40-100 cm
+        "SoilMoi100_200cm_inst",   # 100-200 cm
+    ],
+    "scale": 25000,
+    "years": (2000, 2025),
+}
+
+# Known groundwater depletion zones for focused hotspot analysis
+GROUNDWATER_HOTSPOTS = {
+    "Barind Tract": {
+        "lat": 24.80, "lon": 88.65, "radius": 100000,
+        "note": "Most critically depleted; intensive boro rice irrigation",
+    },
+    "Dhaka Metro": {
+        "lat": 23.81, "lon": 90.41, "radius": 50000,
+        "note": "Urban over-extraction; groundwater table falling 2-3 m/yr",
+    },
+    "Chittagong": {
+        "lat": 22.36, "lon": 91.78, "radius": 40000,
+        "note": "Coastal aquifer; saltwater intrusion risk",
+    },
+}
+
 # ── Rainfall / Climate ─────────────────────────────────────────────────────
 CHIRPS = {
     "collection": "UCSB-CHG/CHIRPS/DAILY",
@@ -448,6 +484,20 @@ GLOBAL_MANGROVE = {
     "scale": 30,
 }
 
+# ── Cyclone Landfall Points ──────────────────────────────────────────────────
+# Each entry: lat/lon = approximate landfall point, radius = impact zone (m),
+# date = ISO landfall date (YYYY-MM-DD)
+CYCLONE_LANDFALL_POINTS = {
+    "Sidr":    {"lat": 22.0, "lon": 89.8, "radius": 50000, "date": "2007-11-15"},
+    "Aila":    {"lat": 22.3, "lon": 89.5, "radius": 40000, "date": "2009-05-25"},
+    "Mahasen": {"lat": 22.2, "lon": 91.3, "radius": 30000, "date": "2013-05-16"},
+    "Roanu":   {"lat": 22.5, "lon": 91.6, "radius": 30000, "date": "2016-05-21"},
+    "Mora":    {"lat": 22.0, "lon": 91.8, "radius": 30000, "date": "2017-05-30"},
+    "Fani":    {"lat": 21.5, "lon": 89.8, "radius": 40000, "date": "2019-05-03"},
+    "Amphan":  {"lat": 22.0, "lon": 89.0, "radius": 50000, "date": "2020-05-20"},
+    "Mocha":   {"lat": 21.0, "lon": 92.0, "radius": 50000, "date": "2023-05-14"},
+}
+
 # ── Key Urban Centers (for focused analysis) ────────────────────────────────
 URBAN_CENTERS = {
     "Dhaka":       {"lat": 23.81, "lon": 90.41, "radius": 25000},
@@ -462,6 +512,25 @@ URBAN_CENTERS = {
     "Narayanganj": {"lat": 23.63, "lon": 90.50, "radius": 10000},
 }
 
+# ── Aquaculture Zones ───────────────────────────────────────────────────────
+AQUACULTURE_ZONES = {
+    "khulna_coastal": {
+        "districts": ["Khulna", "Satkhira", "Bagerhat"],
+        "bounds": {"west": 88.8, "south": 21.8, "east": 89.9, "north": 22.9},
+        "description": "Southwest shrimp belt (Sundarbans fringe)",
+    },
+    "coxs_bazar_coastal": {
+        "districts": ["Cox's Bazar"],
+        "bounds": {"west": 91.8, "south": 20.7, "east": 92.4, "north": 21.9},
+        "description": "Southeast coastal aquaculture zone",
+    },
+    "noakhali_feni": {
+        "districts": ["Noakhali", "Feni", "Lakshmipur"],
+        "bounds": {"west": 90.8, "south": 22.4, "east": 91.6, "north": 23.2},
+        "description": "Lower Meghna coastal fringe",
+    },
+}
+
 # ── Industrial / Economic Zones ─────────────────────────────────────────────
 ECONOMIC_ZONES = {
     "Dhaka EPZ":       {"lat": 23.95, "lon": 90.27, "radius": 5000},
@@ -471,6 +540,47 @@ ECONOMIC_ZONES = {
     "Ishwardi EPZ":    {"lat": 24.13, "lon": 89.07, "radius": 5000},
     "Uttara EPZ":      {"lat": 23.87, "lon": 90.40, "radius": 5000},
     "Mirsarai EZ":     {"lat": 22.76, "lon": 91.56, "radius": 8000},
+}
+
+# ── Char / Land Accretion Zones ─────────────────────────────────────────────
+ACCRETION_ZONES = {
+    "Meghna Estuary": {
+        "west": 90.50, "south": 22.00, "east": 91.30, "north": 23.20,
+        "description": "Lower Meghna mouth, major site of annual char formation",
+    },
+    "Padma-Jamuna Confluence": {
+        "west": 89.40, "south": 23.30, "east": 90.20, "north": 24.20,
+        "description": "Padma-Jamuna junction near Aricha-Goalanda, braided char belt",
+    },
+    "Coastal Noakhali": {
+        "west": 90.80, "south": 22.00, "east": 91.40, "north": 22.90,
+        "description": "Coastal chars off Noakhali and Bhola, rapid accretion zone",
+    },
+    "Jamuna Braids": {
+        "west": 89.50, "south": 24.20, "east": 90.00, "north": 25.20,
+        "description": "Braided Jamuna channel belt, ephemeral mid-channel chars",
+    },
+}
+
+
+# ── Brick Kiln Zones ────────────────────────────────────────────────────────
+# Major brick kiln cluster locations in Bangladesh.
+# radius in meters; used as a spatial filter in detect_kiln_spectral().
+KNOWN_KILN_ZONES = {
+    # Dhaka periphery
+    "Gazipur":      {"lat": 24.00, "lon": 90.43, "radius": 20000},
+    "Narayanganj":  {"lat": 23.63, "lon": 90.50, "radius": 15000},
+    "Savar":        {"lat": 23.86, "lon": 90.26, "radius": 15000},
+    "Manikganj":    {"lat": 23.86, "lon": 89.98, "radius": 15000},
+    # Chittagong outskirts
+    "Sitakunda":    {"lat": 22.62, "lon": 91.66, "radius": 15000},
+    "Hathazari":    {"lat": 22.50, "lon": 91.82, "radius": 12000},
+    # Rajshahi riverbanks (Padma)
+    "Rajshahi_N":   {"lat": 24.45, "lon": 88.62, "radius": 18000},
+    "Chapai":       {"lat": 24.60, "lon": 88.28, "radius": 15000},
+    # Khulna region
+    "Khulna_N":     {"lat": 23.00, "lon": 89.55, "radius": 15000},
+    "Jessore":      {"lat": 23.17, "lon": 89.21, "radius": 15000},
 }
 
 

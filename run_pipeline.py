@@ -22,6 +22,7 @@ Usage:
     python run_pipeline.py --crops                      # Crop detection & rice phenology
     python run_pipeline.py --slums                      # Slum/informal settlement mapping
     python run_pipeline.py --coastal                    # Coastal & mangrove analysis
+    python run_pipeline.py --cyclones                   # Cyclone damage assessment (pre/post)
     python run_pipeline.py --soil                       # Soil properties & erosion risk
     python run_pipeline.py --health                     # Health risk proxy mapping
     python run_pipeline.py --energy                     # Renewable energy potential
@@ -1412,6 +1413,70 @@ def run_coastal():
     print("\nCoastal analysis complete.")
 
 
+def run_cyclones():
+    """Pre/post cyclone damage assessment: vegetation loss, flooding, severity."""
+    from cyclone_damage import run_cyclone_damage_analysis
+
+    print("\n" + "=" * 60)
+    print(f"CYCLONE DAMAGE ASSESSMENT – {cfg.scope_label()}")
+    print(f"  Cyclones: {', '.join(cfg.CYCLONE_LANDFALL_POINTS)}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("cyclones")
+
+    results = run_cyclone_damage_analysis(region)
+
+    damage_list = results.get("cyclone_damage", [])
+    if damage_list:
+        resolved = []
+        for entry in damage_list:
+            if entry.get("error"):
+                resolved.append({
+                    "cyclone":           entry.get("cyclone", ""),
+                    "landfall_date":     entry.get("landfall_date", ""),
+                    "severe_km2":        None,
+                    "moderate_km2":      None,
+                    "mild_km2":          None,
+                    "total_damaged_km2": None,
+                    "flood_area_km2":    None,
+                    "mean_ndvi_diff":    None,
+                    "max_ndvi_drop":     None,
+                    "error":             entry.get("error", ""),
+                })
+                continue
+            resolved.append({
+                "cyclone":           entry.get("cyclone", ""),
+                "landfall_date":     entry.get("landfall_date", ""),
+                "severe_km2":        _resolve_ee(entry.get("severe_km2")),
+                "moderate_km2":      _resolve_ee(entry.get("moderate_km2")),
+                "mild_km2":          _resolve_ee(entry.get("mild_km2")),
+                "total_damaged_km2": _resolve_ee(entry.get("total_damaged_km2")),
+                "flood_area_km2":    _resolve_ee(entry.get("flood_area_km2")),
+                "mean_ndvi_diff":    _resolve_ee(entry.get("mean_ndvi_diff")),
+                "max_ndvi_drop":     _resolve_ee(entry.get("max_ndvi_drop")),
+            })
+
+            # Export damage severity maps
+            for severity in ("severe_mask", "moderate_mask", "mild_mask", "flood_mask"):
+                mask = entry.get(severity)
+                if mask is not None:
+                    cyclone_slug = entry["cyclone"].lower()
+                    try:
+                        export_to_drive(
+                            mask.toFloat(),
+                            f"{cyclone_slug}_{severity}",
+                            region=entry.get("impact_zone", region),
+                        )
+                    except Exception as e:
+                        print(f"  Export {cyclone_slug}/{severity} skipped: {e}")
+
+        export_csv(resolved, "cyclone_damage_summary.csv", "cyclones")
+
+    print("\nCyclone damage assessment complete.")
+
+
 def run_soil():
     """Soil properties, erosion risk, and agricultural suitability."""
     from soil_analysis import run_soil_analysis
@@ -1475,6 +1540,104 @@ def run_soil():
             print(f"  Export ag suitability skipped: {e}")
 
     print("\nSoil analysis complete.")
+
+
+def run_transport():
+    """Transportation and connectivity gap analysis."""
+    from transportation import run_transportation_analysis
+
+    print("\n" + "=" * 60)
+    print(f"TRANSPORTATION & CONNECTIVITY GAP – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("transportation")
+
+    results = run_transportation_analysis(region)
+
+    # Export settlement classification
+    settlement = results.get("settlement_2020", {})
+    for cls in ("urban", "peri_urban", "rural_cluster", "low_density"):
+        area_val = settlement.get(f"{cls}_area_km2")
+        if area_val is not None:
+            export_csv(
+                [{"class": cls, "year": settlement.get("year", 2020),
+                  "area_km2": _resolve_ee(area_val)}],
+                f"settlement_{cls}_2020.csv", "transportation",
+            )
+    if settlement.get("smod"):
+        try:
+            export_to_drive(
+                settlement["smod"].toFloat(),
+                "settlement_classification_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export settlement SMOD skipped: {e}")
+
+    # Export accessibility index
+    if results.get("accessibility") is not None:
+        try:
+            export_to_drive(
+                results["accessibility"].toFloat(),
+                "accessibility_index_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export accessibility index skipped: {e}")
+
+    # Export underserved areas
+    underserved = results.get("underserved", {})
+    if underserved.get("underserved_index"):
+        try:
+            export_to_drive(
+                underserved["underserved_index"].toFloat(),
+                "underserved_index_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export underserved index skipped: {e}")
+    if underserved.get("underserved_mask"):
+        try:
+            export_to_drive(
+                underserved["underserved_mask"].toFloat(),
+                "underserved_mask_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export underserved mask skipped: {e}")
+    if underserved.get("population_at_risk") is not None:
+        export_csv(
+            [{"year": 2020,
+              "population_at_risk": _resolve_ee(underserved["population_at_risk"])}],
+            "population_at_risk_2020.csv", "transportation",
+        )
+
+    # Export per-division connectivity gap
+    gap_fc = results.get("connectivity_gap_fc")
+    if gap_fc is not None:
+        try:
+            export_fc_to_csv(gap_fc, "connectivity_gap_by_division.csv", "transportation")
+        except Exception as e:
+            print(f"  Export connectivity gap skipped: {e}")
+
+    # Export market access
+    market = results.get("market_access", {})
+    if market.get("market_access_index"):
+        try:
+            export_to_drive(
+                market["market_access_index"].toFloat(),
+                "market_access_index_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export market access skipped: {e}")
+    if market.get("dist_to_market"):
+        try:
+            export_to_drive(
+                market["dist_to_market"].toFloat(),
+                "dist_to_market_2020", region=region,
+            )
+        except Exception as e:
+            print(f"  Export dist to market skipped: {e}")
+
+    print("\nTransportation and connectivity analysis complete.")
 
 
 def run_health():
@@ -1823,9 +1986,11 @@ def main():
     parser.add_argument("--crops", action="store_true", help="Crop detection & rice phenology")
     parser.add_argument("--slums", action="store_true", help="Slum/informal settlement mapping")
     parser.add_argument("--coastal", action="store_true", help="Coastal & mangrove analysis")
+    parser.add_argument("--cyclones", action="store_true", help="Cyclone damage assessment (pre/post)")
     parser.add_argument("--soil", action="store_true", help="Soil properties & erosion risk")
     parser.add_argument("--health", action="store_true", help="Health risk proxy mapping")
     parser.add_argument("--energy", action="store_true", help="Renewable energy potential")
+    parser.add_argument("--transport", action="store_true", help="Transportation & connectivity gap")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -1874,6 +2039,8 @@ def main():
         run_slums()
     elif args.coastal:
         run_coastal()
+    elif args.cyclones:
+        run_cyclones()
     elif args.soil:
         run_soil()
     elif args.health:
