@@ -26,6 +26,8 @@ Usage:
     python run_pipeline.py --soil                       # Soil properties & erosion risk
     python run_pipeline.py --health                     # Health risk proxy mapping
     python run_pipeline.py --energy                     # Renewable energy potential
+    python run_pipeline.py --groundwater                # Groundwater depletion (GRACE)
+    python run_pipeline.py --transport                  # Transportation & connectivity gaps
     python run_pipeline.py --full-extended              # ALL modules (water + extended)
 """
 import argparse
@@ -1926,6 +1928,7 @@ def run_full_extended():
         ("crops", run_crops),
         ("coastal", run_coastal),
         ("soil", run_soil),
+        ("transport", run_transport),
     ]
     w2 = _run_parallel(wave2, max_workers=4)
 
@@ -2047,6 +2050,8 @@ def main():
         run_health()
     elif args.energy:
         run_energy()
+    elif args.transport:
+        run_transport()
     else:
         run_test()
 
