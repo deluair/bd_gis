@@ -1832,6 +1832,77 @@ def run_energy():
     print("\nEnergy potential analysis complete.")
 
 
+def run_aquaculture():
+    """Aquaculture pond mapping, expansion tracking, mangrove conversion."""
+    from aquaculture import run_aquaculture_analysis
+
+    print("\n" + "=" * 60)
+    print(f"AQUACULTURE MAPPING – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("aquaculture")
+
+    results = run_aquaculture_analysis(region)
+
+    # Export pond mask (2020, Khulna coastal)
+    if results.get("ponds_2020"):
+        try:
+            export_to_drive(
+                results["ponds_2020"].toFloat(),
+                "aquaculture_ponds_2020_khulna", region=region,
+            )
+        except Exception as e:
+            print(f"  Export pond mask skipped: {e}")
+
+    # Export area stats per zone
+    for key in ["area_2020", "area_coxsbazar_2020", "area_noakhali_2020"]:
+        if results.get(key):
+            entry = results[key]
+            export_csv([{
+                "zone": key,
+                "year": entry.get("year"),
+                "aquaculture_area_km2": _resolve_ee(entry.get("aquaculture_area_km2")),
+            }], f"{key}.csv", "aquaculture")
+
+    # Export time series (batch resolve)
+    if results.get("timeseries"):
+        ts_resolved = _batch_resolve_list(
+            results["timeseries"], ["aquaculture_area_km2"],
+        )
+        export_csv(ts_resolved, "aquaculture_timeseries_khulna.csv", "aquaculture")
+
+    # Export mangrove conversion stats
+    if results.get("mangrove_conversion"):
+        mc = results["mangrove_conversion"]
+        export_csv([{
+            "baseline_year": mc.get("baseline_year"),
+            "current_year": mc.get("current_year"),
+            "conversion_area_km2": _resolve_ee(mc.get("conversion_area_km2")),
+        }], "mangrove_to_aquaculture.csv", "aquaculture")
+        if mc.get("conversion_mask"):
+            try:
+                export_to_drive(
+                    mc["conversion_mask"].toFloat(),
+                    "mangrove_to_aquaculture_map", region=region,
+                )
+            except Exception as e:
+                print(f"  Export conversion map skipped: {e}")
+
+    # Export district breakdown
+    if results.get("district_stats"):
+        try:
+            export_fc_to_csv(
+                results["district_stats"],
+                "aquaculture_by_district.csv", "aquaculture",
+            )
+        except Exception as e:
+            print(f"  Export district stats skipped: {e}")
+
+    print("\nAquaculture analysis complete.")
+
+
 def run_groundwater():
     """Groundwater depletion analysis using GRACE satellite gravity data."""
     from groundwater import run_groundwater_analysis
@@ -1999,6 +2070,7 @@ def run_full_extended():
         ("coastal", run_coastal),
         ("soil", run_soil),
         ("transport", run_transport),
+        ("kilns", run_kilns),
     ]
     w2 = _run_parallel(wave2, max_workers=4)
 
@@ -2065,6 +2137,7 @@ def main():
     parser.add_argument("--energy", action="store_true", help="Renewable energy potential")
     parser.add_argument("--transport", action="store_true", help="Transportation & connectivity gap")
     parser.add_argument("--groundwater", action="store_true", help="Groundwater depletion (GRACE)")
+    parser.add_argument("--aquaculture", action="store_true", help="Aquaculture pond mapping")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -2125,6 +2198,8 @@ def main():
         run_transport()
     elif args.groundwater:
         run_groundwater()
+    elif args.aquaculture:
+        run_aquaculture()
     else:
         run_test()
 
