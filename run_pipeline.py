@@ -28,6 +28,8 @@ Usage:
     python run_pipeline.py --energy                     # Renewable energy potential
     python run_pipeline.py --groundwater                # Groundwater depletion (GRACE)
     python run_pipeline.py --transport                  # Transportation & connectivity gaps
+    python run_pipeline.py --alerts                     # Year-over-year change detection alerts
+    python run_pipeline.py --alerts --alerts-year 2022  # Alerts for a specific year
     python run_pipeline.py --full-extended              # ALL modules (water + extended)
 """
 import argparse
@@ -2073,6 +2075,48 @@ def run_timelapse_pipeline():
     print("\nTimelapse generation complete.")
 
 
+def run_alerts(year=None):
+    """Year-over-year change detection alerts across all GIS domains."""
+    from change_alerts import generate_alert_report
+
+    if year is None:
+        year = 2023  # most recent complete Hansen year
+
+    print("\n" + "=" * 60)
+    print(f"CHANGE DETECTION ALERTS – {cfg.scope_label()} ({year})")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("alerts")
+
+    report = generate_alert_report(year, region)
+
+    # Flatten to rows
+    rows = []
+    for alert_type, result in report.items():
+        rows.append({
+            "year": year,
+            "alert_type": alert_type,
+            "triggered": result.get("triggered", False),
+            "severity": result.get("severity", "none"),
+            "area_km2": _resolve_ee(result.get("area_km2", 0.0)),
+            "description": result.get("description", ""),
+        })
+
+    export_csv(rows, f"alerts_{year}.csv", "alerts")
+
+    # Print summary
+    triggered = [r for r in rows if r["triggered"]]
+    print(f"\nAlert summary for {year}: {len(triggered)}/{len(rows)} triggered")
+    for r in rows:
+        status = "ALERT" if r["triggered"] else "ok   "
+        print(f"  [{status}] {r['alert_type']:<22} severity={r['severity']:<16} area={r['area_km2']}")
+
+    print("\nChange detection alerts complete.")
+    return report
+
+
 def run_chars():
     """Char (river island) detection and land accretion analysis."""
     from char_accretion import run_char_accretion_analysis
@@ -2332,6 +2376,9 @@ def main():
     parser.add_argument("--kilns", action="store_true", help="Brick kiln detection & emission estimates")
     parser.add_argument("--chars", action="store_true", help="Char / land accretion analysis")
     parser.add_argument("--timelapse", action="store_true", help="Timelapse GIF animations (urban/NDVI/water/nightlights)")
+    parser.add_argument("--alerts", action="store_true", help="Year-over-year change detection alerts")
+    parser.add_argument("--alerts-year", type=int, default=None, metavar="YEAR",
+                        help="Year for alerts (default: 2023)")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -2400,6 +2447,8 @@ def main():
         run_kilns()
     elif args.timelapse:
         run_timelapse_pipeline()
+    elif args.alerts:
+        run_alerts(year=args.alerts_year)
     else:
         run_test()
 
