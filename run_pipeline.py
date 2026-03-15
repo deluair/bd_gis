@@ -2056,6 +2056,23 @@ def run_groundwater():
     print("\nGroundwater depletion analysis complete.")
 
 
+def run_timelapse_pipeline():
+    """Generate yearly GIF animations from satellite composites."""
+    from timelapse import run_timelapse
+
+    print("\n" + "=" * 60)
+    print(f"TIMELAPSE ANIMATIONS – {cfg.scope_label()}")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("timelapse")
+
+    run_timelapse(region=region)
+
+    print("\nTimelapse generation complete.")
+
+
 def run_chars():
     """Char (river island) detection and land accretion analysis."""
     from char_accretion import run_char_accretion_analysis
@@ -2314,6 +2331,7 @@ def main():
     parser.add_argument("--aquaculture", action="store_true", help="Aquaculture pond mapping")
     parser.add_argument("--kilns", action="store_true", help="Brick kiln detection & emission estimates")
     parser.add_argument("--chars", action="store_true", help="Char / land accretion analysis")
+    parser.add_argument("--timelapse", action="store_true", help="Timelapse GIF animations (urban/NDVI/water/nightlights)")
     parser.add_argument("--full-extended", action="store_true", help="ALL modules")
 
     args = parser.parse_args()
@@ -2380,6 +2398,8 @@ def main():
         run_chars()
     elif args.kilns:
         run_kilns()
+    elif args.timelapse:
+        run_timelapse_pipeline()
     else:
         run_test()
 
