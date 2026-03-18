@@ -154,6 +154,38 @@ outputs/                # rivers/ floods/ haors/ changes/ nightlights/ urbanizat
 - **OpenLandMap soil is static** — no temporal analysis possible, depth bands: b0/b10/b30/b60/b100/b200
 - **Arsenic/cyclone/slum locations are hardcoded** — update module constants when adding new zones
 - **ERA5 wind uses u/v components** — wind speed = sqrt(u² + v²), not a direct band
+- **DMSP DN (0-63) and VIIRS nW/cm2/sr require `_sensor_scale_range()`** — `compute_light_change` raises ValueError for cross-sensor comparisons
+- **GHSL epoch snapping is logged** — both years snapping to same epoch triggers warning
+- **OpenLandMap soil is static** — `climate_year` only affects CHIRPS/MODIS in soil_analysis
+- **Slum mapping at 30m Landsat is a proxy**, not definitive identification
+- **Arsenic zones are literature-based buffers**, not satellite-derived
+- **`compute_pollutant_stack` (was `compute_aqi_composite`)** mixes incomparable units, result is relative index
+- **`estimate_buildup_density` (was `estimate_road_density`)** measures built-up area, not roads
+- **`channel_abandonment` / `bank_erosion` (was `eroded` / `accreted`)** in river_analysis
+- **MODIS LST requires QA masking (`_mask_lst_quality`)** — fill values corrupt all LST stats
+- **All S5P pollutants now QA-filtered** — NO2 >= 0.75, others >= 0.5
+- **Water occurrence uses dry-season composites (Nov-Feb)**, not full-year
+- **Crop detection includes aus rice (class 4-6)** alongside aman/boro
+- **Erosion risk output is `erosion_susceptibility` index**, NOT quantitative RUSLE
+- **Salinity output is `salinity_proxy`**, NOT EC measurement
+
+## Config Changes
+
+- `SOLAR_RADIATION` moved from energy.py to config.py
+- `GMW_MANGROVE` added to config.py
+- `GLOBAL_FOREST_CHANGE["max_loss_year"]` added
+- `HAOR_MAX_ELEVATION` lowered from 20 to 12
+- `NATIONAL_WETLANDS` entries now have `"type"` field
+- Water index threshold citations added to config.py
+
+## Renamed Functions/Params
+
+| Old | New | Module |
+|-----|-----|--------|
+| `estimate_road_density` | `estimate_buildup_density` | infrastructure.py |
+| `compute_aqi_composite` | `compute_pollutant_stack` | air_quality.py |
+| `compute_erosion_risk(year=)` | `compute_erosion_risk(climate_year=)` | soil_analysis.py |
+| `compute_ag_suitability(year=)` | `compute_ag_suitability(climate_year=)` | soil_analysis.py |
 
 ## When Modifying This Codebase
 

@@ -132,26 +132,45 @@ def get_landsat_collection(start_date, end_date, region=None):
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
 
+    # Landsat 7 Scan Line Corrector (SLC) failed on 2003-05-31. All L7 imagery
+    # after that date has ~22% data loss in a characteristic striped pattern.
+    # L7 is NOT removed because it still provides valid pixels for gap-filling
+    # in median composites. However, when L5 and L7 overlap (2003-2012), L5 is
+    # merged first so that median compositing naturally prefers L5's complete
+    # swaths where both sensors have coverage.
+    slc_off_start = 2003
+    slc_off_end = 2013  # L8 begins Apr 2013, covering the gap after L5 ends
+
+    if start_year < slc_off_end and end_year >= slc_off_start:
+        print(
+            f"WARNING: Date range {start_date} to {end_date} includes the "
+            f"Landsat 7 SLC-off period (May 2003 onwards). L7 imagery has ~22% "
+            f"data loss in striped patterns. Median compositing with L5/L8 will "
+            f"mitigate this, but single-date L7 scenes should be used with caution."
+        )
+
     collections = []
-    # L5: 1984–2012
+    # L5: 1984-2012 (merged first so it takes priority over SLC-off L7 in
+    # median composites during the 2003-2012 overlap period)
     if start_year <= 2012:
         l5_end = min(end_date, "2012-12-31")
         collections.append(_get_landsat_collection("L5", start_date, l5_end, region))
-    # L7: 1999–2024 (SLC-off from 2003 but still useful for composites)
+    # L7: 1999-2024 (SLC failed 2003-05-31, ~22% data loss after that date,
+    # but still useful for gap-filling in multi-sensor composites)
     if start_year <= 2024 and end_year >= 1999:
         l7_start = max(start_date, "1999-01-01")
         collections.append(_get_landsat_collection("L7", l7_start, end_date, region))
-    # L8: 2013–present
+    # L8: 2013-present
     if end_year >= 2013:
         l8_start = max(start_date, "2013-04-01")
         collections.append(_get_landsat_collection("L8", l8_start, end_date, region))
-    # L9: 2021–present
+    # L9: 2021-present
     if end_year >= 2021:
         l9_start = max(start_date, "2021-10-01")
         collections.append(_get_landsat_collection("L9", l9_start, end_date, region))
 
     if not collections:
-        raise ValueError(f"No Landsat data available for {start_date} – {end_date}")
+        raise ValueError(f"No Landsat data available for {start_date} to {end_date}")
 
     merged = collections[0]
     for c in collections[1:]:
