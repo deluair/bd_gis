@@ -58,33 +58,39 @@ SYLHET_HAORS = {
 }
 
 NATIONAL_WETLANDS = {
-    # ── Sylhet division haors ──
-    "Tanguar Haor":       {"lat": 25.10, "lon": 91.07, "radius": 10000},
-    "Hakaluki Haor":      {"lat": 24.62, "lon": 92.05, "radius": 12000},
-    "Hail Haor":          {"lat": 24.45, "lon": 91.80, "radius": 8000},
-    "Shanir Haor":        {"lat": 24.95, "lon": 91.35, "radius": 6000},
-    "Dekar Haor":         {"lat": 25.05, "lon": 90.95, "radius": 7000},
-    # ── Rajshahi / northwest ──
-    "Chalan Beel":        {"lat": 24.35, "lon": 89.15, "radius": 15000},
-    "Barind Tract Beels": {"lat": 24.80, "lon": 88.65, "radius": 10000},
-    # ── Dhaka / central ──
-    "Arial Beel":         {"lat": 23.45, "lon": 90.25, "radius": 10000},
-    "Beel Dakatia":       {"lat": 23.12, "lon": 90.20, "radius": 8000},
-    "Meghna Floodplain":  {"lat": 23.60, "lon": 90.65, "radius": 12000},
-    "Padma Char":         {"lat": 23.80, "lon": 89.70, "radius": 10000},
-    # ── Mymensingh ──
-    "Mohanganj Haor":     {"lat": 24.88, "lon": 90.68, "radius": 8000},
-    # ── Rangpur / north ──
-    "Teesta Floodplain":  {"lat": 25.80, "lon": 89.60, "radius": 12000},
-    "Bangali River Wetlands": {"lat": 25.45, "lon": 89.10, "radius": 8000},
-    # ── Khulna / southwest ──
-    "Sundarbans East":    {"lat": 21.95, "lon": 89.75, "radius": 25000},
-    "Sundarbans West":    {"lat": 21.80, "lon": 89.30, "radius": 25000},
-    # ── Barishal / coastal ──
-    "Nijhum Dwip":        {"lat": 22.04, "lon": 90.98, "radius": 10000},
-    # ── Chittagong / southeast ──
-    "Sonadia Island":     {"lat": 21.47, "lon": 91.85, "radius": 8000},
-    "Teknaf Wetlands":    {"lat": 20.85, "lon": 92.28, "radius": 8000},
+    # ── Sylhet division haors (type: haor) ──
+    "Tanguar Haor":       {"lat": 25.10, "lon": 91.07, "radius": 10000, "type": "haor"},
+    "Hakaluki Haor":      {"lat": 24.62, "lon": 92.05, "radius": 12000, "type": "haor"},
+    "Hail Haor":          {"lat": 24.45, "lon": 91.80, "radius": 8000, "type": "haor"},
+    "Shanir Haor":        {"lat": 24.95, "lon": 91.35, "radius": 6000, "type": "haor"},
+    "Dekar Haor":         {"lat": 25.05, "lon": 90.95, "radius": 7000, "type": "haor"},
+    # ── Rajshahi / northwest (type: beel) ──
+    "Chalan Beel":        {"lat": 24.35, "lon": 89.15, "radius": 15000, "type": "beel"},
+    "Barind Tract Beels": {"lat": 24.80, "lon": 88.65, "radius": 10000, "type": "beel"},
+    # ── Dhaka / central (type: floodplain) ──
+    "Arial Beel":         {"lat": 23.45, "lon": 90.25, "radius": 10000, "type": "beel"},
+    "Beel Dakatia":       {"lat": 23.12, "lon": 90.20, "radius": 8000, "type": "beel"},
+    "Meghna Floodplain":  {"lat": 23.60, "lon": 90.65, "radius": 12000, "type": "floodplain"},
+    "Padma Char":         {"lat": 23.80, "lon": 89.70, "radius": 10000, "type": "floodplain"},
+    # ── Mymensingh (type: haor) ──
+    "Mohanganj Haor":     {"lat": 24.88, "lon": 90.68, "radius": 8000, "type": "haor"},
+    # ── Rangpur / north (type: floodplain) ──
+    "Teesta Floodplain":  {"lat": 25.80, "lon": 89.60, "radius": 12000, "type": "floodplain"},
+    "Bangali River Wetlands": {"lat": 25.45, "lon": 89.10, "radius": 8000, "type": "floodplain"},
+    # ── Khulna / southwest (type: coastal) ──
+    # NOTE: Sundarbans are mangrove/estuarine systems, NOT haors. The haor analysis
+    # (seasonal filling/drying cycle) does not apply to tidal mangrove forests.
+    # These should be analyzed with coastal.py instead.
+    "Sundarbans East":    {"lat": 21.95, "lon": 89.75, "radius": 25000, "type": "coastal"},
+    "Sundarbans West":    {"lat": 21.80, "lon": 89.30, "radius": 25000, "type": "coastal"},
+    # ── Barishal / coastal (type: coastal) ──
+    # NOTE: Nijhum Dwip is a coastal island, not a haor. Tidal dynamics differ
+    # fundamentally from inland haor filling/drying cycles.
+    "Nijhum Dwip":        {"lat": 22.04, "lon": 90.98, "radius": 10000, "type": "coastal"},
+    # ── Chittagong / southeast (type: coastal) ──
+    # NOTE: Sonadia and Teknaf are coastal/estuarine wetlands, not haors.
+    "Sonadia Island":     {"lat": 21.47, "lon": 91.85, "radius": 8000, "type": "coastal"},
+    "Teknaf Wetlands":    {"lat": 20.85, "lon": 92.28, "radius": 8000, "type": "coastal"},
 }
 
 HAORS = SYLHET_HAORS if SCOPE == "sylhet" else NATIONAL_WETLANDS
@@ -252,9 +258,9 @@ SENTINEL2_BANDS = {
 }
 
 # ── Water Index Thresholds ───────────────────────────────────────────────────
-DEFAULT_NDWI_THRESHOLD = 0.0
-DEFAULT_MNDWI_THRESHOLD = 0.0
-DEFAULT_AWEI_THRESHOLD = 0.0
+DEFAULT_NDWI_THRESHOLD = 0.0   # NDWI >= 0 (McFeeters 1996): positive values indicate water
+DEFAULT_MNDWI_THRESHOLD = 0.0  # MNDWI >= 0 (Xu 2006): improved water detection in turbid areas
+DEFAULT_AWEI_THRESHOLD = 0.0   # AWEI >= 0 (Feyisa et al. 2014): context-dependent, 0 is conservative default
 
 # Thresholding strategy: national scope uses fixed (Otsu timeouts on 148k km2)
 DEFAULT_THRESHOLD_METHOD = "fixed" if SCOPE == "national" else "otsu"
@@ -275,8 +281,10 @@ JRC_MONTHLY = "JRC/GSW1_4/MonthlyHistory"
 SRTM_DEM = "USGS/SRTMGL1_003"
 ALOS_DEM = "JAXA/ALOS/AW3D30/V3_2"
 
-# Haor elevation threshold
-HAOR_MAX_ELEVATION = 20
+# Haor elevation threshold (meters above sea level).
+# Sylhet haors: 8-10m typical, coastal wetlands: 3-5m.
+# 12m is a compromise default for mixed national analysis.
+HAOR_MAX_ELEVATION = 12
 
 # ── Nighttime Lights ────────────────────────────────────────────────────────
 DMSP_OLS = {
@@ -298,8 +306,8 @@ MODIS_LANDCOVER = {
     "scale": 500,
 }
 ESA_WORLDCOVER = {
-    "2020": "ESA/WorldCover/v100",
-    "2021": "ESA/WorldCover/v200",
+    "2020": "ESA/WorldCover/v100/2020",
+    "2021": "ESA/WorldCover/v200/2021",
     "band": "Map",
     "scale": 10,
 }
@@ -340,6 +348,7 @@ GLOBAL_FOREST_CHANGE = {
         "lossyear": "lossyear",
     },
     "scale": 30,
+    "max_loss_year": 23,  # lossyear band: 1=2001, 23=2023; update when Hansen dataset updates
 }
 
 # ── Air Quality (Sentinel-5P) ───────────────────────────────────────────────
@@ -436,6 +445,11 @@ ERA5_LAND = {
     "scale": 11132,
     "years": (1950, 2025),
 }
+SOLAR_RADIATION = {
+    "collection": "ECMWF/ERA5_LAND/MONTHLY_AGGR",
+    "band": "surface_solar_radiation_downwards_sum",
+    "scale": 11132,
+}
 
 # ── Population Density ──────────────────────────────────────────────────────
 WORLDPOP = {
@@ -483,6 +497,9 @@ GLOBAL_MANGROVE = {
     "2000": "LANDSAT/MANGROVE_FORESTS",
     "scale": 30,
 }
+# Global Mangrove Watch v3 (1996-2020, annual maps). GEE community asset.
+# Use as mangrove baseline when available; falls back to Hansen reconstruction.
+GMW_MANGROVE = "projects/global-mangrove-watch/gmw-v3"
 
 # ── Cyclone Landfall Points ──────────────────────────────────────────────────
 # Each entry: lat/lon = approximate landfall point, radius = impact zone (m),

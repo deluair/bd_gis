@@ -37,15 +37,24 @@ def delineate_haor_boundary(haor_name, region=None):
     low_elevation = dem.lte(cfg.HAOR_MAX_ELEVATION).clip(region)
 
     # Maximum water extent from multiple monsoon seasons
+    # Biennial sampling + extreme flood years (odd years like 1998, 2007 matter)
     water_union = ee.Image.constant(0)
-    sample_years = list(range(2000, 2025, 2))  # biennial for speed
+    sample_years = sorted(
+        set(range(2000, 2025, 2))
+        | set(y for y in cfg.EXTREME_FLOOD_YEARS if 2000 <= y <= 2024)
+    )
+    skipped = 0
     for year in sample_years:
         try:
             composite = get_seasonal_composite(year, "monsoon", "landsat", region)
             water = classify_water(composite, region=region, method="fixed")
             water_union = water_union.Or(water)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  {haor_name} delineation year {year} skipped: {e}")
+            skipped += 1
+
+    if skipped == len(sample_years):
+        print(f"  WARNING: all sample years failed for {haor_name} delineation")
 
     # Haor boundary = low elevation AND ever-flooded
     haor_mask = low_elevation.And(water_union).rename("haor_boundary")
@@ -147,7 +156,7 @@ def compute_avg_seasonal_cycle(haor_name, years=None):
             if entry["area_km2"] is not None:
                 monthly_sums[entry["month"]].append(entry["area_km2"])
 
-    return monthly_sums
+    return {m: (sum(v) / len(v)) if v else None for m, v in monthly_sums.items()}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -163,25 +172,35 @@ def compare_haor_periods(haor_name, period1=(1985, 1999), period2=(2000, 2025)):
 
     # Period 1 monsoon average
     p1_areas = []
+    p1_skipped = 0
     for year in range(period1[0], period1[1] + 1):
         try:
             composite = get_seasonal_composite(year, "monsoon", "landsat", region)
             water = classify_water(composite, region=region, method="fixed")
             area = compute_water_area(water, region)
             p1_areas.append(area)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  {haor_name} period1 year {year} skipped: {e}")
+            p1_skipped += 1
+
+    if p1_skipped == (period1[1] - period1[0] + 1):
+        print(f"  WARNING: all years failed for {haor_name} period 1")
 
     # Period 2 monsoon average
     p2_areas = []
+    p2_skipped = 0
     for year in range(period2[0], period2[1] + 1):
         try:
             composite = get_seasonal_composite(year, "monsoon", "landsat", region)
             water = classify_water(composite, region=region, method="fixed")
             area = compute_water_area(water, region)
             p2_areas.append(area)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  {haor_name} period2 year {year} skipped: {e}")
+            p2_skipped += 1
+
+    if p2_skipped == (period2[1] - period2[0] + 1):
+        print(f"  WARNING: all years failed for {haor_name} period 2")
 
     def _avg(areas):
         if not areas:
@@ -194,6 +213,26 @@ def compare_haor_periods(haor_name, period1=(1985, 1999), period2=(2000, 2025)):
     p1_avg = _avg(p1_areas)
     p2_avg = _avg(p2_areas)
 
+    # Guard against division by zero when period 1 has no valid data
+    if not p1_areas:
+        return {
+            "haor": haor_name,
+            "period1": f"{period1[0]}-{period1[1]}",
+            "period2": f"{period2[0]}-{period2[1]}",
+            "period1_avg_km2": p1_avg,
+            "period2_avg_km2": p2_avg,
+            "change_km2": p2_avg,
+            "change_pct": None,
+            "error": "No valid data for period 1",
+        }
+
+    # Server-side safe division (guards near-zero p1_avg)
+    pct_change = ee.Algorithms.If(
+        ee.Number(p1_avg).abs().gt(0.01),
+        p2_avg.subtract(p1_avg).divide(p1_avg).multiply(100),
+        ee.Number(0),
+    )
+
     return {
         "haor": haor_name,
         "period1": f"{period1[0]}-{period1[1]}",
@@ -201,7 +240,7 @@ def compare_haor_periods(haor_name, period1=(1985, 1999), period2=(2000, 2025)):
         "period1_avg_km2": p1_avg,
         "period2_avg_km2": p2_avg,
         "change_km2": p2_avg.subtract(p1_avg),
-        "change_pct": p2_avg.subtract(p1_avg).divide(p1_avg).multiply(100),
+        "change_pct": pct_change,
     }
 
 

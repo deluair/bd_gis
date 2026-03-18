@@ -18,18 +18,7 @@ COASTAL_DISTRICTS = [
 ]
 
 COASTAL_BOUNDS = {
-    "west": 89.0, "south": 20.5, "east": 92.5, "north": 23.0,
-}
-
-CYCLONE_LANDFALL_POINTS = {
-    "Sidr 2007":     {"lat": 22.0, "lon": 89.8, "radius": 50000},
-    "Aila 2009":     {"lat": 22.3, "lon": 89.5, "radius": 40000},
-    "Roanu 2016":    {"lat": 22.5, "lon": 91.6, "radius": 30000},
-    "Mora 2017":     {"lat": 22.0, "lon": 91.8, "radius": 30000},
-    "Bulbul 2019":   {"lat": 21.8, "lon": 89.2, "radius": 40000},
-    "Amphan 2020":   {"lat": 22.0, "lon": 89.0, "radius": 50000},
-    "Yaas 2021":     {"lat": 21.5, "lon": 89.5, "radius": 40000},
-    "Mocha 2023":    {"lat": 21.0, "lon": 92.0, "radius": 50000},
+    "west": 89.0, "south": 20.5, "east": 92.5, "north": 23.5,
 }
 
 
@@ -163,12 +152,23 @@ def compute_mangrove_area(region, year=2021, scale=30):
     }
 
 
+def _get_mangrove_mask(region, year=2021):
+    """Get mangrove mask for a given year, with fallback for pre-2020."""
+    if year >= 2020:
+        return get_mangrove_extent(region, year)
+    # ESA WorldCover not available before 2020: use Hansen-based mangrove proxy
+    from vegetation import get_forest_cover_2000
+    treecover = get_forest_cover_2000(region)
+    dem = ee.Image(cfg.SRTM_DEM).select("elevation").clip(region)
+    return treecover.gt(30).And(dem.lt(10)).rename("mangrove")
+
+
 def compute_mangrove_health(year, region, scale=1000):
     """
     Assess mangrove health using NDVI within mangrove extent.
     Lower NDVI in mangroves indicates degradation or die-off.
     """
-    mangrove = get_mangrove_extent(region)
+    mangrove = _get_mangrove_mask(region, year)
     ndvi = (
         ee.ImageCollection(cfg.MODIS_NDVI["collection"])
         .filterDate(f"{year}-01-01", f"{year}-12-31")
@@ -192,22 +192,30 @@ def compute_mangrove_health(year, region, scale=1000):
 
 
 def detect_mangrove_change(year1, year2, region, scale=30):
-    """Detect mangrove gain/loss using ESA WorldCover or DW."""
-    from vegetation import get_forest_cover_2000, get_forest_loss
+    """Detect mangrove gain/loss using Hansen lossyear filtered to year1-year2."""
+    from vegetation import get_forest_cover_2000, get_forest_loss_year
 
     # Use Hansen forest data in Sundarbans region
-    loss = get_forest_loss(region)
+    lossyear = get_forest_loss_year(region)
     treecover = get_forest_cover_2000(region)
     # Mangrove proxy: tree cover > 30% in coastal low-elevation areas
     dem = ee.Image(cfg.SRTM_DEM).select("elevation").clip(region)
     coastal_forest = treecover.gt(30).And(dem.lt(10))
-    mangrove_loss = loss.And(coastal_forest).rename("mangrove_loss")
+
+    # Filter Hansen lossyear to the requested period
+    loss_in_period = lossyear.gt(0).And(
+        lossyear.gte(year1 - 2000)
+    ).And(
+        lossyear.lte(year2 - 2000)
+    )
+    mangrove_loss = loss_in_period.And(coastal_forest).rename("mangrove_loss")
 
     area = mangrove_loss.multiply(ee.Image.pixelArea()).reduceRegion(
         reducer=ee.Reducer.sum(), geometry=region,
         scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
     )
     return {
+        "period": f"{year1}-{year2}",
         "mangrove_loss_mask": mangrove_loss,
         "mangrove_loss_km2": ee.Number(area.get("mangrove_loss")).divide(1e6),
     }
@@ -220,25 +228,34 @@ def detect_mangrove_change(year1, year2, region, scale=30):
 def assess_cyclone_impact(cyclone_name, pre_year=None, post_year=None):
     """
     Assess vegetation damage from a cyclone by comparing NDVI before/after.
+    Uses 3-month windows around the landfall date for sharper signal.
     """
-    if cyclone_name not in CYCLONE_LANDFALL_POINTS:
+    if cyclone_name not in cfg.CYCLONE_LANDFALL_POINTS:
         raise ValueError(f"Unknown cyclone: {cyclone_name}")
 
-    info = CYCLONE_LANDFALL_POINTS[cyclone_name]
-    # Extract year from name
-    year = int(cyclone_name.split()[-1])
+    info = cfg.CYCLONE_LANDFALL_POINTS[cyclone_name]
+    year = int(info["date"][:4])
     center = ee.Geometry.Point([info["lon"], info["lat"]])
     impact_zone = center.buffer(info["radius"])
 
-    if pre_year is None:
-        pre_year = year - 1
-    if post_year is None:
-        post_year = year
+    # Compute 3-month pre/post windows from the landfall date
+    landfall_date = ee.Date(info["date"])
+    pre_start = landfall_date.advance(-3, "month")
+    pre_end = landfall_date
+    post_start = landfall_date
+    post_end = landfall_date.advance(3, "month")
+
+    if pre_year is not None and post_year is not None:
+        # Caller override: use full-year ranges
+        pre_start = ee.Date(f"{pre_year}-01-01")
+        pre_end = ee.Date(f"{pre_year}-12-31")
+        post_start = ee.Date(f"{post_year}-01-01")
+        post_end = ee.Date(f"{post_year}-12-31")
 
     # Pre and post NDVI
     pre_ndvi = (
         ee.ImageCollection(cfg.MODIS_NDVI["collection"])
-        .filterDate(f"{pre_year}-01-01", f"{pre_year}-12-31")
+        .filterDate(pre_start, pre_end)
         .filterBounds(impact_zone)
         .select(cfg.MODIS_NDVI["ndvi_band"])
         .mean()
@@ -246,7 +263,7 @@ def assess_cyclone_impact(cyclone_name, pre_year=None, post_year=None):
     )
     post_ndvi = (
         ee.ImageCollection(cfg.MODIS_NDVI["collection"])
-        .filterDate(f"{post_year}-01-01", f"{post_year}-12-31")
+        .filterDate(post_start, post_end)
         .filterBounds(impact_zone)
         .select(cfg.MODIS_NDVI["ndvi_band"])
         .mean()
@@ -262,6 +279,7 @@ def assess_cyclone_impact(cyclone_name, pre_year=None, post_year=None):
     )
     return {
         "cyclone": cyclone_name,
+        "year": year,
         "mean_ndvi_drop": stats.get("ndvi_damage_mean"),
         "max_ndvi_drop": stats.get("ndvi_damage_max"),
         "ndvi_damage_image": ndvi_drop.clip(impact_zone),
@@ -272,15 +290,17 @@ def assess_cyclone_impact(cyclone_name, pre_year=None, post_year=None):
 # Full Analysis Runner
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def run_coastal_analysis(region):
+def run_coastal_analysis(region=None):
     """Full coastal analysis pipeline."""
     results = {}
 
-    # Use coastal bounds for focused analysis
-    coastal_region = ee.Geometry.Rectangle([
-        COASTAL_BOUNDS["west"], COASTAL_BOUNDS["south"],
-        COASTAL_BOUNDS["east"], COASTAL_BOUNDS["north"],
-    ])
+    # Use passed region, or fall back to coastal bounds
+    if region is None:
+        region = ee.Geometry.Rectangle([
+            COASTAL_BOUNDS["west"], COASTAL_BOUNDS["south"],
+            COASTAL_BOUNDS["east"], COASTAL_BOUNDS["north"],
+        ])
+    coastal_region = region
 
     print("\n  Mapping Low-Elevation Coastal Zone...")
     try:
@@ -326,7 +346,7 @@ def run_coastal_analysis(region):
 
     print("  Assessing cyclone impacts...")
     results["cyclone_impacts"] = []
-    for cyclone in CYCLONE_LANDFALL_POINTS:
+    for cyclone in cfg.CYCLONE_LANDFALL_POINTS:
         try:
             results["cyclone_impacts"].append(assess_cyclone_impact(cyclone))
         except Exception as e:

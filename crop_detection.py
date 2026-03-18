@@ -25,7 +25,8 @@ def compute_lswi(image):
 
 
 def compute_gcvi(image):
-    """Green Chlorophyll Vegetation Index = (NIR / Green) - 1. Sensitive to chlorophyll."""
+    """Green Chlorophyll Vegetation Index = (NIR / Green) - 1. Sensitive to chlorophyll.
+    Not used internally; available for external modules and ad-hoc analysis."""
     nir = image.select("nir")
     green = image.select("green")
     return nir.divide(green).subtract(1).rename("gcvi")
@@ -37,7 +38,8 @@ def compute_ndvi(image):
 
 
 def compute_evi(image):
-    """Enhanced Vegetation Index."""
+    """Enhanced Vegetation Index.
+    Not used internally; available for external modules and ad-hoc analysis."""
     nir = image.select("nir")
     red = image.select("red")
     blue = image.select("blue")
@@ -78,8 +80,15 @@ def detect_rice_paddy(year, season, region):
         raise ValueError(f"Unknown rice season: {season}")
 
     # Get composites for each phase
+    # WARNING: Jul-Aug composites during Bangladesh monsoon may have very few
+    # cloud-free observations. LSWI-based flood detection on sparse composites
+    # is unreliable. Consider using SAR (Sentinel-1) for monsoon water detection.
     try:
         flood_col = get_landsat_collection(flood_start, flood_end, region)
+        flood_count = flood_col.size().getInfo()
+        if flood_count < 3:
+            print(f"  WARNING: Only {flood_count} cloud-free images for {season} flood phase "
+                  f"({flood_start} to {flood_end}). Composite may be unreliable.")
         flood_comp = make_composite(flood_col)
     except Exception:
         return None
@@ -151,31 +160,43 @@ def classify_crop_types(year, region):
     dw = get_dynamic_world(f"{year}-01-01", f"{year}-12-31", region)
     cropland = dw.eq(4)  # crops class
 
-    # Detect rice (aman + boro)
+    # Detect rice (aman + boro + aus)
     aman_rice = detect_rice_paddy(year, "aman", region)
     boro_rice = detect_rice_paddy(year, "boro", region)
+    aus_rice = detect_rice_paddy(year, "aus", region)
 
     rice_any = ee.Image.constant(0).rename("rice")
     if aman_rice is not None:
         rice_any = rice_any.Or(aman_rice)
     if boro_rice is not None:
         rice_any = rice_any.Or(boro_rice)
+    if aus_rice is not None:
+        rice_any = rice_any.Or(aus_rice)
 
     # Other crops = cropland but not rice
     other_crops = cropland.And(rice_any.Not()).rename("other_crops")
 
-    # Classify into: 1=aman_rice, 2=boro_rice, 3=double_crop_rice, 4=other_crops, 0=non_crop
+    # Classify into:
+    # 1=aman, 2=boro, 3=aman+boro, 4=aus, 5=aus+aman, 6=aus+boro, 7=other_crops, 0=non_crop
     classified = ee.Image.constant(0).rename("crop_type")
-    if aman_rice is not None and boro_rice is not None:
-        double = aman_rice.And(boro_rice)
-        classified = classified.where(aman_rice.And(double.Not()), 1)
-        classified = classified.where(boro_rice.And(double.Not()), 2)
-        classified = classified.where(double, 3)
-    elif aman_rice is not None:
+
+    has_aman = aman_rice is not None
+    has_boro = boro_rice is not None
+    has_aus = aus_rice is not None
+
+    if has_aman:
         classified = classified.where(aman_rice, 1)
-    elif boro_rice is not None:
+    if has_boro:
         classified = classified.where(boro_rice, 2)
-    classified = classified.where(other_crops, 4)
+    if has_aman and has_boro:
+        classified = classified.where(aman_rice.And(boro_rice), 3)
+    if has_aus:
+        classified = classified.where(aus_rice, 4)
+    if has_aus and has_aman:
+        classified = classified.where(aus_rice.And(aman_rice), 5)
+    if has_aus and has_boro:
+        classified = classified.where(aus_rice.And(boro_rice), 6)
+    classified = classified.where(other_crops, 7)
 
     return {
         "crop_type": classified,
@@ -193,7 +214,8 @@ def compute_crop_area_stats(year, region, scale=100):
 
     classified = result["crop_type"]
     classes = {0: "Non-crop", 1: "Aman Rice", 2: "Boro Rice",
-               3: "Double-crop Rice", 4: "Other Crops"}
+               3: "Aman+Boro Rice", 4: "Aus Rice", 5: "Aus+Aman Rice",
+               6: "Aus+Boro Rice", 7: "Other Crops"}
     stats = []
     for val, name in classes.items():
         mask = classified.eq(val)
@@ -219,7 +241,7 @@ def compute_crop_ndvi_profile(year, region, scale=1000):
     """
     from land_cover import get_esa_worldcover
     try:
-        wc = get_esa_worldcover(2021, region)
+        wc = get_esa_worldcover(min(year, 2021), region)  # clamp to available years
         cropland = wc.eq(40)  # ESA WorldCover cropland class
     except Exception:
         cropland = None
@@ -261,6 +283,8 @@ def compute_yield_proxy(year, season, region, scale=1000):
         start, end = f"{year}-08-01", f"{year}-11-30"
     elif season == "boro":
         start, end = f"{year}-02-01", f"{year}-05-15"
+    elif season == "aus":
+        start, end = f"{year}-04-01", f"{year}-08-31"
     else:
         start, end = f"{year}-01-01", f"{year}-12-31"
 
@@ -304,9 +328,10 @@ def compute_crop_stress(year, region, scale=1000):
         .clip(region)
     )
 
-    # Long-term mean for same period
+    # Long-term mean for same period (exclude analysis year to avoid self-inclusion)
     lt_images = []
-    for y in range(2000, 2021):
+    baseline_years = [y for y in range(2000, 2021) if y != year]
+    for y in baseline_years:
         img = (
             ee.ImageCollection(cfg.MODIS_NDVI["collection"])
             .filterDate(f"{y}-08-01", f"{y}-10-31")
@@ -350,6 +375,14 @@ def compute_cropping_intensity(year, region, scale=250):
             high_ndvi_months = high_ndvi_months.add(ndvi.gt(0.4).unmask(0))
         except Exception:
             pass
+
+    # Mask to cropland before computing cropping intensity
+    try:
+        from land_cover import get_esa_worldcover
+        cropland_mask = get_esa_worldcover(min(year, 2021), region).eq(40)
+        high_ndvi_months = high_ndvi_months.updateMask(cropland_mask)
+    except Exception:
+        pass  # fallback: no cropland mask
 
     # Approximate crop cycles: 3-4 months = single crop, 6-8 = double, 9+ = triple
     intensity = (

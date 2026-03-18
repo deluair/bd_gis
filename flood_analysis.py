@@ -10,6 +10,19 @@ from data_acquisition import (
 from water_classification import classify_water, compute_water_area
 
 
+def _scale_for_scope():
+    """Choose reduceRegion scale based on configured scope.
+
+    National-scale needs coarser scale (300) to avoid GEE computation limits.
+    Division-scale (e.g. sylhet) uses 100. District-scale uses 30.
+    """
+    if cfg.SCOPE == "national":
+        return 300
+    if cfg.SCOPE.startswith("district:"):
+        return 30
+    return 100
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Annual Seasonal Water Mapping
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -44,18 +57,18 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
     seasonal_flood = monsoon_water.And(dry_water.Not()).rename("water")
 
     # Area calculations (scope-aware scale to avoid undercount at national extent)
-    scale = 300 if cfg.SCOPE == "national" else 30
+    scale = _scale_for_scope()
     dry_area = compute_water_area(dry_water, region, scale=scale)
     monsoon_area = compute_water_area(monsoon_water, region, scale=scale)
     seasonal_area = compute_water_area(seasonal_flood, region, scale=scale)
 
     # Sanity check: monsoon extent must be >= dry extent. If not, flag it.
     # This can happen when composites are mislabeled or have poor data coverage.
-    monsoon_area = ee.Number(ee.Algorithms.If(
-        monsoon_area.lt(dry_area),
-        dry_area,  # clamp to dry_area so seasonal doesn't go negative
-        monsoon_area,
-    ))
+    sanity_clamped = False
+    if monsoon_area.getInfo() < dry_area.getInfo():
+        sanity_clamped = True
+        print(f"  WARNING: monsoon < dry for {year}, clamping")
+        monsoon_area = dry_area
     seasonal_area = monsoon_area.subtract(dry_area)
 
     return {
@@ -68,6 +81,7 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
         "dry_area_km2": dry_area,
         "monsoon_area_km2": monsoon_area,
         "seasonal_area_km2": seasonal_area,
+        "sanity_clamped": sanity_clamped,
     }
 
 
@@ -114,8 +128,11 @@ def analyze_extreme_flood(year, region=None):
     # Target year monsoon
     extents = get_annual_water_extents(year, region)
 
-    # 5-year average around the event (excluding the event year) for context
-    ref_years = [y for y in range(year - 3, year + 3) if y != year]
+    # Reference average around the event, excluding all known extreme flood years
+    ref_years = [
+        y for y in range(year - 5, year + 6)
+        if y not in cfg.EXTREME_FLOOD_YEARS
+    ]
     ref_monsoon_areas = []
     for y in ref_years:
         try:
@@ -152,7 +169,7 @@ def compute_district_flood_stats(water_mask, districts_fc):
     Compute water area per district for a given water mask.
     Returns ee.FeatureCollection with area stats.
     """
-    scale = 300 if cfg.SCOPE == "national" else 30
+    scale = _scale_for_scope()
 
     def _compute_per_district(feature):
         geom = feature.geometry()
@@ -175,7 +192,7 @@ def build_district_time_series(start_year, end_year, districts_fc=None):
     if districts_fc is None:
         admin = get_admin_boundaries()
         districts_fc = admin.filter(
-            ee.Filter.inList("ADM1_NAME", cfg.DISTRICTS)
+            ee.Filter.inList("ADM2_NAME", cfg.DISTRICTS)
         )
 
     results = []
@@ -206,19 +223,20 @@ def compute_flood_frequency(start_year, end_year, region=None):
     if region is None:
         region = get_study_area()
 
-    count = ee.Image.constant(0)
-    valid = ee.Image.constant(0)
-
+    # Build image collection server-side for flood frequency
+    flood_images = []
     for year in range(start_year, end_year + 1):
         try:
             extents = get_annual_water_extents(year, region)
-            monsoon = extents["monsoon_water"]
-            count = count.add(monsoon)
-            valid = valid.add(ee.Image.constant(1))
+            flood_images.append(extents["monsoon_water"].selfMask().rename("flood"))
         except Exception:
             pass
 
-    frequency = count.divide(valid).rename("flood_frequency")
+    if not flood_images:
+        return ee.Image.constant(0).rename("flood_frequency")
+
+    collection = ee.ImageCollection(flood_images)
+    frequency = collection.sum().divide(collection.count()).rename("flood_frequency")
     return frequency
 
 

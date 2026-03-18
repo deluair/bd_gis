@@ -18,7 +18,10 @@ import config as cfg
 # Arsenic Risk Zones
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Known high-arsenic groundwater zones in Bangladesh
+# NOTE: Only 8 high-profile districts listed. BGS/DPHE 2001 report identified
+# arsenic above 0.05 mg/L in 61 of 64 districts. Notable omissions include
+# Noakhali, Lakshmipur, Shariatpur, Brahmanbaria, Narayanganj, Bagerhat.
+# This list should be expanded based on BGS/DPHE district risk classifications.
 ARSENIC_HOTSPOTS = {
     "Chandpur":    {"lat": 23.23, "lon": 90.65, "radius": 20000},
     "Comilla":     {"lat": 23.46, "lon": 91.18, "radius": 20000},
@@ -78,8 +81,13 @@ def compute_heat_stress(year, region, scale=1000):
 
 def compute_mosquito_habitat(year, region):
     """
-    Mosquito breeding habitat proxy: stagnant water + warm temperature.
-    Uses LSWI (standing water) + LST (warm enough for breeding > 20C).
+    Compute surface water and flooded vegetation extent.
+
+    WARNING: This detects surface water presence (LSWI, Dynamic World),
+    NOT stagnant mosquito breeding habitat specifically. Rivers, irrigation
+    channels, and active rice paddies are included. For vector disease risk,
+    additional factors (stagnation, container habitats, urban drainage) are
+    needed but not captured by satellite at this resolution.
     """
     from data_acquisition import get_seasonal_composite
     try:
@@ -98,7 +106,7 @@ def compute_mosquito_habitat(year, region):
     try:
         dw = get_dynamic_world(f"{year}-07-01", f"{year}-09-30", region)
         flooded_veg = dw.eq(3)  # flooded_vegetation class
-        habitat = standing_water.Or(flooded_veg).rename("mosquito_habitat")
+        habitat = standing_water.Or(flooded_veg).rename("surface_water_extent")
     except Exception:
         habitat = standing_water
 
@@ -133,8 +141,15 @@ def compute_air_pollution_risk(year, region, scale=5000):
 
 def map_arsenic_zones(region):
     """
-    Map known arsenic-contaminated groundwater zones.
-    Returns risk zones based on known hotspot locations.
+    Map arsenic risk zones based on LITERATURE-REPORTED district hotspots.
+
+    WARNING: This is a spatial lookup table, NOT satellite-derived data.
+    Arsenic concentration varies by orders of magnitude at well-level scales
+    depending on aquifer depth and geology. For actual arsenic data, use the
+    BGS/DPHE national groundwater survey or BAMWSP well-test database.
+
+    Buffer radii are approximate and do not represent validated contamination
+    boundaries.
     """
     zones = ee.Image.constant(0).rename("arsenic_risk").clip(region).toFloat()
     for name, info in ARSENIC_HOTSPOTS.items():
@@ -162,19 +177,33 @@ def compute_health_risk_index(year, region, scale=1000):
     """
     indicators = []
     weights = []
+    included = []
+
+    # Weights are expert-judgment defaults, not literature-calibrated.
+    # No AHP, PCA, or sensitivity analysis has been performed.
+    # Dynamic rescaling occurs when indicators fail (total_weight < 1.0),
+    # which changes the effective index definition silently.
+    w_waterlogging = 0.25  # Dominant flood/drainage risk in BD
+    w_heat_stress = 0.20
+    w_pop_density = 0.20
+    w_air_pollution = 0.20
+    w_veg_deficit = 0.15
 
     # 1. Waterlogging
     waterlog = compute_waterlogging_risk(year, region)
     if waterlog is not None:
         indicators.append(waterlog.toFloat().rename("waterlog_risk"))
-        weights.append(0.25)
+        weights.append(w_waterlogging)
+        included.append("waterlogging")
 
     # 2. Heat stress
     try:
         heat = compute_heat_stress(year, region)
-        heat_norm = heat.unitScale(0, 30).clamp(0, 1).rename("heat_risk")
+        # Northwest Bangladesh (Rajshahi) can exceed 40C LST for 60-90 days/year
+        heat_norm = heat.unitScale(0, 90).clamp(0, 1).rename("heat_risk")
         indicators.append(heat_norm)
-        weights.append(0.20)
+        weights.append(w_heat_stress)
+        included.append("heat_stress")
     except Exception:
         pass
 
@@ -184,7 +213,8 @@ def compute_health_risk_index(year, region, scale=1000):
         pop = get_population_density(year, region)
         pop_norm = pop.unitScale(0, 10000).clamp(0, 1).rename("pop_risk")
         indicators.append(pop_norm)
-        weights.append(0.20)
+        weights.append(w_pop_density)
+        included.append("pop_density")
     except Exception:
         pass
 
@@ -192,7 +222,8 @@ def compute_health_risk_index(year, region, scale=1000):
     pollution = compute_air_pollution_risk(year, region)
     if pollution is not None:
         indicators.append(pollution)
-        weights.append(0.20)
+        weights.append(w_air_pollution)
+        included.append("air_pollution")
 
     # 5. Vegetation deficit (environmental degradation)
     try:
@@ -202,7 +233,8 @@ def compute_health_risk_index(year, region, scale=1000):
             ndvi.clamp(0, 0.6).divide(0.6)
         ).rename("veg_risk")
         indicators.append(veg_risk)
-        weights.append(0.15)
+        weights.append(w_veg_deficit)
+        included.append("veg_deficit")
     except Exception:
         pass
 
@@ -210,6 +242,10 @@ def compute_health_risk_index(year, region, scale=1000):
         return None
 
     total_weight = sum(weights)
+    if len(included) < 5:
+        print(f"  WARNING: Health risk index built from {len(included)}/5 indicators: {included}")
+    if abs(total_weight - 1.0) > 0.001:
+        print(f"  WARNING: Total weight before rescaling = {total_weight:.2f} (expected 1.0)")
     risk_index = ee.Image.constant(0).rename("health_risk")
     for ind, w in zip(indicators, weights):
         risk_index = risk_index.add(ind.multiply(w / total_weight))

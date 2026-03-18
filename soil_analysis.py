@@ -1,14 +1,19 @@
 """
-Soil analysis – soil properties mapping, erosion risk assessment,
+Soil analysis -- soil properties mapping, erosion susceptibility index,
 salinity intrusion detection, and agricultural suitability scoring
 using OpenLandMap, DEM, rainfall, and vegetation data.
+
+WARNING: OpenLandMap soil properties are STATIC (circa 2017).
+The 'climate_year' parameter affects only dynamic inputs
+(CHIRPS rainfall, MODIS NDVI). Soil texture, pH, and organic carbon
+do not change between analysis years.
 """
 import ee
 import config as cfg
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Soil Properties (OpenLandMap)
+# Soil Properties (OpenLandMap) -- STATIC circa 2017, no temporal variation
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_soil_clay(region, depth="b0"):
@@ -62,58 +67,60 @@ def compute_slope(region):
     return ee.Terrain.slope(dem).rename("slope_deg")
 
 
-def compute_erosion_risk(region, year=2023, scale=250):
+def compute_erosion_risk(region, climate_year=2023, scale=250):
     """
-    Simplified erosion risk index based on RUSLE factors:
-    - R (rainfall erosivity): proxy from annual precipitation
-    - K (soil erodibility): proxy from clay/sand ratio
-    - LS (slope-length): proxy from DEM slope
-    - C (cover): proxy from NDVI (low NDVI = high risk)
+    Compute erosion susceptibility index (NOT actual RUSLE output).
 
-    Returns 0-1 erosion risk (higher = more risk).
+    Uses normalized R, K, LS, C factors as a weighted index.
+    P-factor (support practices) is omitted due to lack of spatial data.
+    Output is a relative 0-1 index, not quantitative soil loss (t/ha/yr).
+
+    Soil inputs (K factor) are STATIC (OpenLandMap circa 2017).
+    Only R (rainfall) and C (NDVI cover) vary with climate_year.
     """
     # R factor proxy: annual rainfall normalized
     from climate import get_chirps_annual
     try:
-        precip = get_chirps_annual(year, region)
+        precip = get_chirps_annual(climate_year, region)
         r_factor = precip.unitScale(500, 4000).clamp(0, 1).rename("r_factor")
     except Exception:
         r_factor = ee.Image.constant(0.5).rename("r_factor").clip(region)
 
-    # K factor proxy: high clay + low organic carbon = erodible
+    # K factor proxy: high clay + low organic carbon = erodible (STATIC)
     try:
         clay = get_soil_clay(region)
         soc = get_soil_organic_carbon(region)
-        clay_norm = clay.unitScale(0, 60).clamp(0, 1)
+        # Upper bound 80% for Bangladesh heavy clay vertisols (delta soils reach 70-80%)
+        clay_norm = clay.unitScale(0, 80).clamp(0, 1)
         soc_inv = ee.Image.constant(1).subtract(soc.unitScale(0, 30).clamp(0, 1))
         k_factor = clay_norm.add(soc_inv).divide(2).rename("k_factor")
     except Exception:
         k_factor = ee.Image.constant(0.5).rename("k_factor").clip(region)
 
-    # LS factor proxy: slope
+    # LS factor proxy: slope (STATIC, from SRTM DEM)
     try:
         slope = compute_slope(region)
         ls_factor = slope.unitScale(0, 30).clamp(0, 1).rename("ls_factor")
     except Exception:
-        ls_factor = ee.Image.constant(0.3).rename("ls_factor").clip(region)
+        ls_factor = ee.Image.constant(0.05).rename("ls_factor").clip(region)  # Near-flat terrain fallback (Bangladesh delta)
 
     # C factor proxy: inverse NDVI (low vegetation = high erosion)
     from vegetation import get_modis_ndvi_annual
     try:
-        ndvi = get_modis_ndvi_annual(year, region)
+        ndvi = get_modis_ndvi_annual(climate_year, region)
         c_factor = ee.Image.constant(1).subtract(
             ndvi.clamp(0, 0.8).divide(0.8)
         ).rename("c_factor")
     except Exception:
         c_factor = ee.Image.constant(0.5).rename("c_factor").clip(region)
 
-    # Combined erosion risk
+    # Combined erosion susceptibility index (weighted, NOT RUSLE soil loss)
     erosion_risk = (
         r_factor.multiply(0.3)
         .add(k_factor.multiply(0.2))
         .add(ls_factor.multiply(0.25))
         .add(c_factor.multiply(0.25))
-        .rename("erosion_risk")
+        .rename("erosion_susceptibility")
     )
     return erosion_risk
 
@@ -125,8 +132,11 @@ def compute_erosion_risk(region, year=2023, scale=250):
 def detect_salinity_proxy(year, region, scale=30):
     """
     Detect areas likely affected by salinity using spectral indicators.
-    Saline soils show: low NDVI, high brightness, high SWIR reflectance.
-    Combined into a Salinity Index (SI) = sqrt(Blue * Red).
+
+    WARNING: SI = sqrt(Blue * Red) is a bare-soil salinity proxy.
+    Invalid for vegetated, flooded, or water-covered surfaces.
+    Not validated against SRDI (Soil Resources Development Institute) data.
+    For policy use, cross-reference with SRDI 2009/2019 salinity maps.
     """
     from data_acquisition import get_seasonal_composite
     try:
@@ -136,8 +146,8 @@ def detect_salinity_proxy(year, region, scale=30):
 
     blue = composite.select("blue")
     red = composite.select("red")
-    # Salinity Index
-    si = blue.multiply(red).sqrt().rename("salinity_index")
+    # Salinity Index (bare-soil proxy only)
+    si = blue.multiply(red).sqrt().rename("salinity_proxy")
 
     # Also use NDVI deficit as indicator
     ndvi = composite.normalizedDifference(["nir", "red"])
@@ -159,6 +169,9 @@ def compute_salinity_risk_zones(region, year=2023, scale=100):
         return None
 
     # Normalize salinity proxy
+    # Upper bound 0.3 is empirically chosen for Bangladesh coastal zone.
+    # May need recalibration against SRDI reference data.
+    # Pixels with SI > 0.3 are clamped to maximum risk.
     sal_norm = sal_proxy.unitScale(0, 0.3).clamp(0, 1)
 
     risk = sal_norm.multiply(low_elev.unmask(0)).rename("salinity_risk")
@@ -169,25 +182,29 @@ def compute_salinity_risk_zones(region, year=2023, scale=100):
 # Agricultural Suitability
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_ag_suitability(region, year=2023, scale=250):
+def compute_ag_suitability(region, climate_year=2023, scale=250):
     """
     Agricultural suitability score (0-1, higher = more suitable).
-    Factors: soil quality, slope, flooding risk, rainfall adequacy.
+    Factors: soil quality, slope, rainfall adequacy.
+
+    Soil inputs (SOC, pH) are STATIC (OpenLandMap circa 2017).
+    Only rainfall varies with climate_year.
     """
-    # Soil quality: high SOC + moderate clay + neutral pH
+    # Soil quality: high SOC + moderate clay + neutral pH (STATIC)
     try:
         soc = get_soil_organic_carbon(region)
         soc_score = soc.unitScale(0, 20).clamp(0, 1)
         ph = get_soil_ph(region)
-        # Optimal pH 5.5-7.5
-        ph_score = ee.Image.constant(1).subtract(
-            ph.subtract(6.5).abs().divide(2)
+        # Optimal pH range: 5.5-7.5 (score = 1.0)
+        # Linear decay outside that range to 0 at pH 3.5 and 9.5
+        ph_score = ee.Image(1).subtract(
+            ph.subtract(6.5).abs().subtract(1.0).max(0).divide(2)
         ).clamp(0, 1)
         soil_score = soc_score.add(ph_score).divide(2).rename("soil_score")
     except Exception:
         soil_score = ee.Image.constant(0.5).rename("soil_score").clip(region)
 
-    # Slope: flat is better for rice
+    # Slope: flat is better for rice (STATIC, from SRTM DEM)
     try:
         slope = compute_slope(region)
         slope_score = ee.Image.constant(1).subtract(
@@ -196,12 +213,14 @@ def compute_ag_suitability(region, year=2023, scale=250):
     except Exception:
         slope_score = ee.Image.constant(0.7).rename("slope_score").clip(region)
 
-    # Rainfall adequacy
+    # Rainfall adequacy: inverted-U scoring
     from climate import get_chirps_annual
     try:
-        precip = get_chirps_annual(year, region)
-        # Optimal: 1500-3000mm
-        rain_score = precip.unitScale(800, 2000).clamp(0, 1).rename("rain_score")
+        precip = get_chirps_annual(climate_year, region)
+        # Inverted-U: optimal 1500-2000mm, penalties for both too-low and too-high
+        precip_low = precip.unitScale(800, 1500).clamp(0, 1)  # penalty below 1500
+        precip_high = precip.unitScale(3000, 2000).clamp(0, 1)  # penalty above 2000 (inverted)
+        rain_score = precip_low.min(precip_high).rename("rain_score")
     except Exception:
         rain_score = ee.Image.constant(0.7).rename("rain_score").clip(region)
 

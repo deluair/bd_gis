@@ -3,6 +3,7 @@ Air quality analysis -- Sentinel-5P TROPOMI pollutant mapping for NO2, SO2,
 CO, aerosol index, and formaldehyde over Bangladesh (2018-present).
 """
 import ee
+from datetime import datetime
 import config as cfg
 
 
@@ -40,6 +41,12 @@ def get_pollutant(pollutant, start_date, end_date, region):
     Get Sentinel-5P mean composite for a pollutant over a date range.
     pollutant: one of 'NO2', 'SO2', 'CO', 'AEROSOL', 'HCHO'
     """
+    # S5P OFFL products reliable from mid-2018 onward
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+    if start_dt.year < 2018 or (start_dt.year == 2018 and start_dt.month < 5):
+        print(f"  WARNING: S5P data before May 2018 is incomplete, clamping start date")
+        start_date = "2018-05-01"
+
     if pollutant == "AEROSOL":
         return _get_aerosol_collection(start_date, end_date, region).mean().clip(region)
     info = cfg.SENTINEL5P[pollutant]
@@ -47,8 +54,13 @@ def get_pollutant(pollutant, start_date, end_date, region):
         ee.ImageCollection(info["collection"])
         .filterDate(start_date, end_date)
         .filterBounds(region)
-        .select(info["band"])
     )
+    # Apply QA filter for all S5P products
+    # NO2: qa_value >= 0.75 (ESA recommended)
+    # SO2, CO, HCHO: qa_value >= 0.5 (standard TROPOMI L3 threshold)
+    qa_threshold = 0.75 if pollutant == "NO2" else 0.5
+    col = col.map(lambda img: img.updateMask(img.select("qa_value").gte(qa_threshold)))
+    col = col.select(info["band"])
     return col.mean().clip(region)
 
 
@@ -121,7 +133,7 @@ def compute_annual_pollutant_timeseries(pollutant, region, start_year=2019,
 def compute_seasonal_pollutant(pollutant, year, region, scale=5000):
     """Compute pollutant stats by season for a given year."""
     seasons = {
-        "winter": (f"{year}-01-01", f"{year}-02-28"),
+        "winter": (f"{year}-01-01", f"{year}-03-01"),
         "pre_monsoon": (f"{year}-03-01", f"{year}-05-31"),
         "monsoon": (f"{year}-06-01", f"{year}-09-30"),
         "post_monsoon": (f"{year}-10-01", f"{year}-12-31"),
@@ -136,7 +148,7 @@ def compute_seasonal_pollutant(pollutant, year, region, scale=5000):
     return results
 
 
-def compute_urban_pollution(pollutant, year, scale=2000):
+def compute_urban_pollution(pollutant, year, scale=5500):
     """Compute pollutant levels for each major urban center."""
     results = []
     for city, info in cfg.URBAN_CENTERS.items():
@@ -181,16 +193,23 @@ def compute_pollution_hotspots(pollutant, start_date, end_date, region,
     }
 
 
-def compute_aqi_composite(start_date, end_date, region):
+def compute_pollutant_stack(start_date, end_date, region):
     """
-    Create a multi-pollutant composite image for air quality overview.
-    Bands: NO2, SO2, CO, AEROSOL.
+    Stack multiple pollutant bands into a single image.
+
+    WARNING: Bands have incomparable units (NO2/SO2/CO in mol/m2,
+    AEROSOL in dimensionless AAI). Do not combine arithmetically
+    without per-band normalization. This is NOT an AQI.
     """
     no2 = get_no2(start_date, end_date, region).rename("NO2")
     so2 = get_so2(start_date, end_date, region).rename("SO2")
     co = get_co(start_date, end_date, region).rename("CO")
     aer = get_aerosol_index(start_date, end_date, region).rename("Aerosol")
     return no2.addBands([so2, co, aer])
+
+
+# Backward-compatible alias
+compute_aqi_composite = compute_pollutant_stack
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -203,11 +222,15 @@ def run_air_quality_analysis(region):
 
     pollutants = ["NO2", "SO2", "CO", "AEROSOL"]
 
-    print("\n  Computing annual pollutant time series (2019-2024)...")
+    start_year = cfg.SENTINEL5P["years"][0] + 1  # Skip partial first year
+    end_year = cfg.SENTINEL5P["years"][1]
+    print(f"\n  Computing annual pollutant time series ({start_year}-{end_year})...")
     results["timeseries"] = {}
     for p in pollutants:
         print(f"    {p}...")
-        results["timeseries"][p] = compute_annual_pollutant_timeseries(p, region)
+        results["timeseries"][p] = compute_annual_pollutant_timeseries(
+            p, region, start_year=start_year, end_year=end_year
+        )
 
     print("  Computing seasonal patterns for 2023...")
     results["seasonal_2023"] = {}
@@ -235,12 +258,12 @@ def run_air_quality_analysis(region):
         except Exception as e:
             print(f"    Hotspots {p} skipped: {e}")
 
-    print("  Creating multi-pollutant composite...")
+    print("  Creating multi-pollutant stack...")
     try:
-        results["aqi_composite"] = compute_aqi_composite(
+        results["pollutant_stack"] = compute_pollutant_stack(
             "2023-01-01", "2023-12-31", region
         )
     except Exception as e:
-        print(f"    AQI composite skipped: {e}")
+        print(f"    Pollutant stack skipped: {e}")
 
     return results

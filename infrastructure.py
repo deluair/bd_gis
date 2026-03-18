@@ -20,8 +20,11 @@ def detect_construction_change(year1, year2, region):
     dw1 = get_dynamic_world(f"{year1}-01-01", f"{year1}-12-31", region)
     dw2 = get_dynamic_world(f"{year2}-01-01", f"{year2}-12-31", region)
 
-    # New construction: not built in year1, built in year2
-    built_class = 6  # Dynamic World built class
+    # NOTE: Dynamic World class 6 ("built") represents completed built-up land,
+    # not in-progress construction. Year-to-year transitions from other classes
+    # to "built" detect new urbanization, not construction activity specifically.
+    # Annual mode composites can show false transitions due to cloud contamination.
+    built_class = cfg.DW_CLASSES.index("built")  # DW class 6 = "built"
     was_not_built = dw1.neq(built_class)
     is_now_built = dw2.eq(built_class)
     new_construction = was_not_built.And(is_now_built).rename("new_construction")
@@ -71,7 +74,9 @@ def detect_construction_spectral(composite1, composite2, region):
     ndvi1 = compute_ndvi(composite1)
     ndvi2 = compute_ndvi(composite2)
 
-    # Construction indicator: NDBI increased AND NDVI decreased
+    # NDBI increase > 0.1 and NDVI decrease > 0.1 are conservative thresholds.
+    # May produce false positives from: seasonal crop senescence, char exposure,
+    # floodplain sedimentation. Consider masking to existing built-up areas.
     ndbi_increase = ndbi2.subtract(ndbi1).gt(0.1)
     ndvi_decrease = ndvi1.subtract(ndvi2).gt(0.1)
     construction = ndbi_increase.And(ndvi_decrease).rename("construction_spectral")
@@ -112,14 +117,16 @@ def analyze_all_economic_zones(scale=100):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Road / Infrastructure Density
+# Built-up / Infrastructure Density
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def estimate_road_density(region, year=2021, scale=100):
+def estimate_buildup_density(region, year=2021, scale=100):
     """
-    Estimate road/infrastructure density using built-up area and NDBI.
-    Higher NDBI with linear features indicates road corridors.
-    Uses GHSL built-up surface as a proxy for infrastructure density.
+    Estimate built-up surface density using GHSL within a 1km kernel.
+
+    NOTE: This measures built-up area density, NOT road network density.
+    Roads are not separable from buildings in GHSL at 100m resolution.
+    For actual road density, use OpenStreetMap road network data.
     """
     from urbanization import get_ghsl_built
     built = get_ghsl_built(year, region)
@@ -146,12 +153,16 @@ def compute_connectivity_index(region, year=2020, scale=1000):
     urban_mask = built.gt(100)  # >100m2 built-up
 
     # Distance to nearest urban pixel (meters)
-    distance = urban_mask.fastDistanceTransform().sqrt().multiply(scale).rename("dist_to_urban")
+    # Project to metric CRS before distance transform
+    urban_projected = urban_mask.reproject(crs="EPSG:32646", scale=100)
+    dist = urban_projected.fastDistanceTransform().sqrt().multiply(100)  # pixels to meters at 100m scale
+    distance = dist.rename("dist_to_urban")
 
-    # Nightlight intensity
+    # Nightlight intensity (DMSP 0-63, VIIRS 0-200 nW/cm2/sr)
     lights = get_nightlights(year, region)
     band_name = lights.bandNames().getInfo()[0]
-    light_norm = lights.select(band_name).unitScale(0, 63).clamp(0, 1)
+    lo, hi = (0, 63) if year <= 2013 else (0, 200)
+    light_norm = lights.select(band_name).unitScale(lo, hi).clamp(0, 1)
 
     # Connectivity = inverse distance * light intensity
     dist_norm = distance.unitScale(0, 50000).clamp(0, 1)
@@ -192,8 +203,9 @@ def identify_construction_hotspots(year1, year2, region, scale=100):
         kernel=ee.Kernel.circle(2000, "meters"),
     ).rename("construction_density")
 
-    # Hotspot: density above 75th percentile
-    threshold = density.reduceRegion(
+    # Compute threshold from pixels with actual construction, not empty rural areas
+    non_zero = density.updateMask(density.gt(0))
+    threshold = non_zero.reduceRegion(
         reducer=ee.Reducer.percentile([75]),
         geometry=region, scale=scale,
         maxPixels=cfg.MAX_PIXELS, bestEffort=True,
@@ -233,7 +245,7 @@ def run_infrastructure_analysis(region):
 
     print("  Estimating infrastructure density...")
     try:
-        results["infra_density"] = estimate_road_density(region)
+        results["infra_density"] = estimate_buildup_density(region)
     except Exception as e:
         print(f"    Infrastructure density skipped: {e}")
 

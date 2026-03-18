@@ -74,31 +74,40 @@ def compute_poverty_index(year, region, scale=1000):
     # 1. Nighttime lights (inverted: dark = deprived)
     lights = get_light_intensity(year, region)
     band_name = lights.bandNames().getInfo()[0]
-    light_norm = lights.select(band_name).unitScale(0, 63).clamp(0, 1)
+    from nightlights import _sensor_scale_range
+    lo, hi = _sensor_scale_range(year)
+    light_norm = lights.select(band_name).unitScale(lo, hi).clamp(0, 1)
     light_deprivation = ee.Image.constant(1).subtract(light_norm).rename("light_dep")
 
     # 2. Built-up fraction (inverted: no buildings = deprived)
     try:
         built = get_built_fraction(year, region)
         built_deprivation = ee.Image.constant(1).subtract(built).rename("built_dep")
-    except Exception:
+    except Exception as e:
+        print(f"  WARNING: built_fraction failed ({e}), using fallback constant")
         built_deprivation = ee.Image.constant(0.5).rename("built_dep").clip(region)
 
     # 3. Population-weighted light deficit
     try:
         pop = get_population_density(year, region)
-        pop_norm = pop.unitScale(0, 5000).clamp(0, 1)
+        # WorldPop units: people per 100m pixel. Dhaka can exceed 20k.
+        pop_norm = pop.unitScale(0, 25000).clamp(0, 1)
         # High population + low light = poverty hotspot
+        # NOTE: pop_light_gap is the product of two [0,1] values, so its effective
+        # variance is lower than other indicators. This gives it less influence
+        # in the composite despite nominal equal weighting.
         pop_light_gap = pop_norm.multiply(light_deprivation).rename("pop_light_gap")
-    except Exception:
+    except Exception as e:
+        print(f"  WARNING: population_density failed ({e}), using fallback constant")
         pop_light_gap = ee.Image.constant(0.5).rename("pop_light_gap").clip(region)
 
     # 4. Vegetation stress (low NDVI in crop areas = food insecurity proxy)
     try:
         ndvi = get_vegetation_greenness(year, region)
-        ndvi_norm = ndvi.unitScale(0, 0.8).clamp(0, 1)
+        ndvi_norm = ndvi.unitScale(0, 0.9).clamp(0, 1)
         veg_stress = ee.Image.constant(1).subtract(ndvi_norm).rename("veg_stress")
-    except Exception:
+    except Exception as e:
+        print(f"  WARNING: vegetation_greenness failed ({e}), using fallback constant")
         veg_stress = ee.Image.constant(0.5).rename("veg_stress").clip(region)
 
     # Combine with equal weights
@@ -228,5 +237,7 @@ def run_poverty_analysis(region):
             results["poverty_timeseries"][year] = stats
         except Exception as e:
             print(f"    Poverty {year} skipped: {e}")
+
+    results["uncertainty_pct"] = 25
 
     return results

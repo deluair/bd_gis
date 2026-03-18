@@ -1,6 +1,11 @@
 """
 Land cover / land use classification – MODIS, Dynamic World, ESA WorldCover,
 and Copernicus Global Land Cover for multi-scale LULC analysis.
+
+NOTE: Multiple land cover products are computed independently.
+Known discrepancies exist (e.g., Sundarbans: MODIS=Evergreen Broadleaf,
+ESA=Mangrove; Haors: MODIS=Wetlands/Croplands, DW=flooded_vegetation).
+Cross-product validation is not yet implemented.
 """
 import ee
 import config as cfg
@@ -21,7 +26,11 @@ def get_modis_landcover(year, region):
 
 
 def get_dynamic_world(start_date, end_date, region):
-    """Get Dynamic World mode composite (most frequent class per pixel)."""
+    """Get Dynamic World mode composite (most frequent class per pixel).
+
+    Full-year mode is biased toward monsoon (4-5 months of daily observations).
+    For seasonal analysis, consider dry-season (Oct-Mar) mode separately.
+    """
     col = (
         ee.ImageCollection(cfg.DYNAMIC_WORLD["collection"])
         .filterDate(start_date, end_date)
@@ -44,12 +53,18 @@ def get_dynamic_world_probabilities(start_date, end_date, region):
 
 def get_esa_worldcover(year, region):
     """Get ESA WorldCover (10m resolution) for 2020 or 2021."""
-    key = str(year) if str(year) in cfg.ESA_WORLDCOVER else "2021"
+    if str(year) not in cfg.ESA_WORLDCOVER:
+        print(f"  WARNING: ESA WorldCover not available for {year}, using 2021 fallback")
+        key = "2021"
+    else:
+        key = str(year)
     return ee.Image(cfg.ESA_WORLDCOVER[key]).select(cfg.ESA_WORLDCOVER["band"]).clip(region)
 
 
 def get_copernicus_landcover(year, region):
-    """Get Copernicus Global Land Cover (100m) for a year (2015–2019)."""
+    """Get Copernicus Global Land Cover (100m) for a year (2015-2019)."""
+    if year < 2015 or year > 2019:
+        print(f"  WARNING: Copernicus LULC only covers 2015-2019, requested {year}")
     col = (
         ee.ImageCollection(cfg.COPERNICUS_LANDCOVER["collection"])
         .filterDate(f"{year}-01-01", f"{year}-12-31")
@@ -76,6 +91,7 @@ def compute_lulc_area_stats(classified_image, region, scale=None, class_values=N
         class_names = [str(v) for v in class_values]
 
     results = []
+    band_name = classified_image.bandNames().getInfo()[0]
     for val, name in zip(class_values, class_names):
         class_mask = classified_image.eq(val)
         area = class_mask.multiply(ee.Image.pixelArea()).reduceRegion(
@@ -85,7 +101,6 @@ def compute_lulc_area_stats(classified_image, region, scale=None, class_values=N
             maxPixels=cfg.MAX_PIXELS,
             bestEffort=True,
         )
-        band_name = classified_image.bandNames().getInfo()[0]
         results.append({
             "class_value": val,
             "class_name": name,
@@ -126,7 +141,7 @@ def compute_lulc_change(year1, year2, region, source="modis"):
     }
 
 
-def compute_dw_class_timeseries(region, start_year=2016, end_year=2024, step=1):
+def compute_dw_class_timeseries(region, start_year=2015, end_year=2024, step=1):
     """
     Track Dynamic World class proportions over time.
     Returns list of {year, water, trees, grass, crops, built, bare, ...}.
@@ -156,6 +171,7 @@ def compute_dw_class_timeseries(region, start_year=2016, end_year=2024, step=1):
 def compute_modis_lulc_timeseries(region, start_year=2001, end_year=2023, step=2):
     """Track MODIS LULC class areas over time."""
     IGBP_NAMES = [
+        "Water Bodies",
         "Evergreen Needleleaf", "Evergreen Broadleaf", "Deciduous Needleleaf",
         "Deciduous Broadleaf", "Mixed Forest", "Closed Shrublands",
         "Open Shrublands", "Woody Savannas", "Savannas", "Grasslands",
@@ -169,7 +185,7 @@ def compute_modis_lulc_timeseries(region, start_year=2001, end_year=2023, step=2
             stats = compute_lulc_area_stats(
                 lc, region,
                 scale=cfg.MODIS_LANDCOVER["scale"],
-                class_values=list(range(1, 18)),
+                class_values=list(range(0, 18)),
                 class_names=IGBP_NAMES,
             )
             entry = {"year": year}
@@ -186,13 +202,19 @@ def compute_modis_lulc_timeseries(region, start_year=2001, end_year=2023, step=2
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_land_cover_analysis(region):
-    """Full LULC analysis pipeline."""
+    """Full LULC analysis pipeline.
+
+    NOTE: Multiple land cover products are computed independently.
+    Known discrepancies exist (e.g., Sundarbans: MODIS=Evergreen Broadleaf,
+    ESA=Mangrove; Haors: MODIS=Wetlands/Croplands, DW=flooded_vegetation).
+    Cross-product validation is not yet implemented.
+    """
     results = {}
 
     print("\n  Computing MODIS LULC time series (2001–2023)...")
     results["modis_timeseries"] = compute_modis_lulc_timeseries(region)
 
-    print("  Computing Dynamic World class proportions (2016–2024)...")
+    print("  Computing Dynamic World class proportions (2015-2024)...")
     results["dw_timeseries"] = compute_dw_class_timeseries(region)
 
     print("  Loading ESA WorldCover 2021...")
@@ -207,9 +229,9 @@ def run_land_cover_analysis(region):
     except Exception as e:
         print(f"    MODIS change skipped: {e}")
 
-    print("  Computing Dynamic World change 2016–2024...")
+    print("  Computing Dynamic World change 2015-2024...")
     try:
-        results["dw_change"] = compute_lulc_change(2016, 2024, region, "dynamic_world")
+        results["dw_change"] = compute_lulc_change(2015, 2024, region, "dynamic_world")
     except Exception as e:
         print(f"    DW change skipped: {e}")
 

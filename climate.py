@@ -7,6 +7,24 @@ import config as cfg
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MODIS LST QA Masking
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _mask_lst_quality(img):
+    """Mask MODIS LST pixels where QC bits 0-1 are not 00 (good quality)."""
+    qc = img.select("QC_Day")
+    quality_mask = qc.bitwiseAnd(3).eq(0)
+    return img.updateMask(quality_mask)
+
+
+def _mask_lst_quality_night(img):
+    """Mask MODIS LST pixels where QC_Night bits 0-1 are not 00 (good quality)."""
+    qc = img.select("QC_Night")
+    quality_mask = qc.bitwiseAnd(3).eq(0)
+    return img.updateMask(quality_mask)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Rainfall (CHIRPS)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -34,8 +52,10 @@ def get_chirps_monthly(year, month, region):
     return col.sum().clip(region).rename("monthly_precip_mm")
 
 
-def compute_rainfall_timeseries(region, start_year=1985, end_year=2024, step=1, scale=5000):
+def compute_rainfall_timeseries(region, start_year=1985, end_year=2024, step=1, scale=None):
     """Compute annual total and mean rainfall over time."""
+    if scale is None:
+        scale = cfg.CHIRPS["scale"]
     series = []
     for year in range(start_year, end_year + 1, step):
         try:
@@ -57,8 +77,10 @@ def compute_rainfall_timeseries(region, start_year=1985, end_year=2024, step=1, 
     return series
 
 
-def compute_monsoon_rainfall(year, region, scale=5000):
+def compute_monsoon_rainfall(year, region, scale=None):
     """Compute total monsoon season (Jun-Sep) rainfall."""
+    if scale is None:
+        scale = cfg.CHIRPS["scale"]
     col = (
         ee.ImageCollection(cfg.CHIRPS["collection"])
         .filterDate(f"{year}-06-01", f"{year}-09-30")
@@ -113,10 +135,12 @@ def get_lst_annual(year, region, time_of_day="day"):
     time_of_day: 'day' or 'night'
     """
     band = cfg.MODIS_LST["day_band"] if time_of_day == "day" else cfg.MODIS_LST["night_band"]
+    qc_mask_fn = _mask_lst_quality if time_of_day == "day" else _mask_lst_quality_night
     col = (
         ee.ImageCollection(cfg.MODIS_LST["collection"])
         .filterDate(f"{year}-01-01", f"{year}-12-31")
         .filterBounds(region)
+        .map(qc_mask_fn)
         .select(band)
     )
     # Scale to Kelvin, then convert to Celsius
@@ -171,7 +195,20 @@ def compute_uhi_effect(year, city_name, buffer_urban=5000, buffer_rural=25000, s
         reducer=ee.Reducer.mean(), geometry=urban_zone,
         scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
     )
-    rural_temp = day_lst.reduceRegion(
+
+    # Mask rural ring to actual rural/vegetated pixels (exclude peri-urban)
+    try:
+        lc = ee.Image(cfg.ESA_WORLDCOVER["2021"]).clip(rural_ring)
+        rural_mask = lc.select(cfg.ESA_WORLDCOVER["band"]).eq(10).Or(
+            lc.select(cfg.ESA_WORLDCOVER["band"]).eq(20)
+        ).Or(
+            lc.select(cfg.ESA_WORLDCOVER["band"]).eq(40)
+        )  # tree cover, shrubland, cropland
+        rural_lst = day_lst.updateMask(rural_mask)
+    except Exception:
+        rural_lst = day_lst  # fallback to unmasked
+
+    rural_temp = rural_lst.reduceRegion(
         reducer=ee.Reducer.mean(), geometry=rural_ring,
         scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
     )
@@ -190,7 +227,7 @@ def compute_uhi_effect(year, city_name, buffer_urban=5000, buffer_rural=25000, s
 def compute_seasonal_temperature(year, region, scale=1000):
     """Compute seasonal mean LST for a given year."""
     seasons = {
-        "winter": (f"{year}-01-01", f"{year}-02-28"),
+        "winter": (f"{year}-01-01", f"{year}-03-01"),
         "pre_monsoon": (f"{year}-03-01", f"{year}-05-31"),
         "monsoon": (f"{year}-06-01", f"{year}-09-30"),
         "post_monsoon": (f"{year}-10-01", f"{year}-12-31"),
@@ -202,16 +239,17 @@ def compute_seasonal_temperature(year, region, scale=1000):
                 ee.ImageCollection(cfg.MODIS_LST["collection"])
                 .filterDate(start, end)
                 .filterBounds(region)
+                .map(_mask_lst_quality)
                 .select(cfg.MODIS_LST["day_band"])
             )
             mean_img = col.mean().multiply(cfg.MODIS_LST["scale_factor"]).add(
                 cfg.MODIS_LST["kelvin_offset"]
-            ).clip(region)
+            ).clip(region).rename("lst_celsius")
             stats = mean_img.reduceRegion(
                 reducer=ee.Reducer.mean(), geometry=region,
                 scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
             )
-            results[f"{season}_lst_c"] = stats.get(cfg.MODIS_LST["day_band"])
+            results[f"{season}_lst_c"] = stats.get("lst_celsius")
         except Exception:
             results[f"{season}_lst_c"] = None
     return results
@@ -221,34 +259,78 @@ def compute_seasonal_temperature(year, region, scale=1000):
 # Drought Index
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_drought_severity(year, region, scale=5000):
+def compute_drought_severity(year, region, scale=None, ref_start=1985, ref_end=2015):
     """
     Simple drought proxy using rainfall anomaly + temperature anomaly.
     Negative values = drought conditions.
+
+    NOTE: This is NOT a standard SPI/SPEI/PDSI index. It is a simplified composite
+    drought proxy. Precipitation anomaly is normalized by the pixel-level long-term
+    standard deviation of annual precipitation over the reference period. Temperature
+    anomaly uses the same reference period for consistency.
     """
+    if scale is None:
+        scale = cfg.CHIRPS["scale"]
+
     try:
-        precip_anomaly = compute_rainfall_anomaly(year, region)
+        precip_anomaly = compute_rainfall_anomaly(year, region, ref_start=ref_start, ref_end=ref_end)
     except Exception:
         return None
 
-    # Normalize precipitation anomaly to roughly -1 to 1
-    precip_norm = precip_anomaly.divide(500).clamp(-2, 2).rename("precip_norm")
+    # Compute pixel-level long-term std of annual precipitation for normalization
+    lt_years = list(range(ref_start, ref_end + 1))
+    lt_precip_images = []
+    for y in lt_years:
+        try:
+            lt_precip_images.append(get_chirps_annual(y, region))
+        except Exception:
+            pass
+
+    if lt_precip_images:
+        lt_precip_col = ee.ImageCollection(lt_precip_images)
+        precip_std = lt_precip_col.reduce(ee.Reducer.stdDev()).rename("annual_precip_mm")
+        # Clamp std to avoid division by zero (min 50mm)
+        precip_std = precip_std.max(50)
+        precip_norm = precip_anomaly.divide(precip_std).clamp(-2, 2).rename("precip_norm")
+    else:
+        # Fallback: rough national average std (~500mm for Bangladesh annual precip)
+        precip_norm = precip_anomaly.divide(500).clamp(-2, 2).rename("precip_norm")
 
     # Temperature anomaly (higher temp = worse drought)
+    # Uses the same reference period as precipitation
     try:
         lst = get_lst_annual(year, region, "day")
-        lt_lst = (
-            ee.ImageCollection(cfg.MODIS_LST["collection"])
-            .filterDate("2000-01-01", "2020-12-31")
-            .filterBounds(region)
-            .select(cfg.MODIS_LST["day_band"])
-            .mean()
-            .multiply(cfg.MODIS_LST["scale_factor"])
-            .add(cfg.MODIS_LST["kelvin_offset"])
-            .clip(region)
-            .rename("lst_celsius")
-        )
-        temp_anomaly = lst.subtract(lt_lst).divide(5).multiply(-1).rename("temp_norm")
+        # Long-term mean LST over the reference period (clamped to MODIS availability)
+        lst_ref_start = max(ref_start, 2000)
+        lt_lst_images = []
+        for y in range(lst_ref_start, ref_end + 1):
+            try:
+                lt_lst_images.append(get_lst_annual(y, region, "day"))
+            except Exception:
+                pass
+
+        if lt_lst_images:
+            lt_lst_col = ee.ImageCollection(lt_lst_images)
+            lt_lst_mean = lt_lst_col.mean().rename("lst_celsius")
+            lt_lst_std = lt_lst_col.reduce(ee.Reducer.stdDev()).rename("lst_celsius")
+            lt_lst_std = lt_lst_std.max(0.5)  # avoid division by zero
+            temp_anomaly = lst.subtract(lt_lst_mean).divide(lt_lst_std).multiply(-1).rename("temp_norm")
+        else:
+            # Fallback: rough normalization
+            lt_lst = (
+                ee.ImageCollection(cfg.MODIS_LST["collection"])
+                .filterDate(f"{lst_ref_start}-01-01", f"{ref_end}-12-31")
+                .filterBounds(region)
+                .map(_mask_lst_quality)
+                .select(cfg.MODIS_LST["day_band"])
+                .mean()
+                .multiply(cfg.MODIS_LST["scale_factor"])
+                .add(cfg.MODIS_LST["kelvin_offset"])
+                .clip(region)
+                .rename("lst_celsius")
+            )
+            temp_anomaly = lst.subtract(lt_lst).divide(5).multiply(-1).rename("temp_norm")
+
         drought = precip_norm.add(temp_anomaly).divide(2).rename("drought_index")
     except Exception:
         drought = precip_norm.rename("drought_index")

@@ -1,6 +1,10 @@
 """
-Nighttime lights analysis – DMSP-OLS (1992–2013) and VIIRS DNB (2014–present)
+Nighttime lights analysis – DMSP-OLS (1992-2013) and VIIRS DNB (2014-present)
 for tracking electrification, economic activity, and urbanization patterns.
+
+WARNING: DMSP DN (0-63) and VIIRS nW/cm2/sr are NOT directly comparable.
+Use _sensor_scale_range() for normalization. Cross-sensor time series
+require intercalibration (e.g., Li et al. 2017, Elvidge et al. 2014).
 """
 import ee
 import config as cfg
@@ -20,6 +24,13 @@ def _sensor_for_year(year):
 def _lit_threshold_for_year(year):
     """Return sensor-appropriate lit threshold for a given year."""
     return DMSP_LIT_THRESHOLD if year <= 2013 else VIIRS_LIT_THRESHOLD
+
+
+def _sensor_scale_range(year):
+    """Return (min, max) normalization range for the active sensor."""
+    if year <= 2013:
+        return (0, 63)  # DMSP-OLS stable_lights DN
+    return (0, 200)  # VIIRS DNB nW/cm2/sr (covers Bangladesh urban range)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,7 +54,7 @@ def get_viirs_annual(year, region):
         .filterDate(f"{year}-01-01", f"{year}-12-31")
         .filterBounds(region)
     )
-    return col.select(cfg.VIIRS_DNB["band"]).median().clip(region)
+    return col.select(cfg.VIIRS_DNB["band"]).mean().clip(region)
 
 
 def get_nightlights(year, region):
@@ -97,6 +108,11 @@ def compute_light_time_series(start_year, end_year, region, step=1, scale=1000):
 
 def compute_light_change(year1, year2, region):
     """Compute absolute and relative change in nighttime lights."""
+    if year1 <= 2013 < year2:
+        raise ValueError(
+            f"Cross-sensor comparison {year1} (DMSP) vs {year2} (VIIRS) not supported. "
+            "Use within-sensor comparisons or apply intercalibration first."
+        )
     lights1 = get_nightlights(year1, region)
     lights2 = get_nightlights(year2, region)
     diff = lights2.subtract(lights1).rename("light_change")
@@ -119,10 +135,11 @@ def classify_electrification(year, region, threshold=None):
     band_name = cfg.DMSP_OLS["band"] if year <= 2013 else cfg.VIIRS_DNB["band"]
     lit = lights.select(band_name).gt(threshold).rename("electrified")
 
+    electrification_scale = 1000 if year <= 2013 else 500
     lit_area = lit.multiply(ee.Image.pixelArea()).reduceRegion(
         reducer=ee.Reducer.sum(),
         geometry=region,
-        scale=1000,
+        scale=electrification_scale,
         maxPixels=cfg.MAX_PIXELS,
         bestEffort=True,
     )

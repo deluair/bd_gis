@@ -11,6 +11,7 @@ the southwest (Khulna, Satkhira, Bagerhat) are detectable via:
   - Temporal: permanent water absent in 1990s baseline
 """
 import ee
+import math
 import config as cfg
 
 
@@ -40,9 +41,13 @@ AQUACULTURE_ZONES = {
 NDWI_POND_MIN = 0.1          # ponds show positive NDWI (water present)
 NDWI_POND_MAX = 0.7          # very high NDWI = open deep water, not ponds
 TURBIDITY_PROXY_MIN = 0.05   # shallow/turbid: moderate green reflectance
-# Shape regularity: compactness ratio threshold (area / perimeter^2 * 4*pi)
-# Circular = 1.0, rectangles ~ 0.785; natural water bodies typically < 0.4
-SHAPE_COMPACTNESS_MIN = 0.35
+
+# Connected-component size filter (replaces compactness ratio approach).
+# At 30m resolution: 1 pixel = 900 m2 = 0.09 ha.
+# Min 5 pixels = 0.45 ha (filters noise/speckle).
+# Max 5000 pixels = 450 ha (filters large natural water bodies).
+SIZE_MIN_PIXELS = 5
+SIZE_MAX_PIXELS = 5000
 
 # JRC occurrence: ponds are permanent but not tidal
 POND_OCCURRENCE_MIN = 50     # > 50% occurrence = not tidal/seasonal
@@ -89,7 +94,11 @@ def detect_aquaculture_ponds(year, region):
     """
     Detect aquaculture ponds using Sentinel-2 (post-2015) or Landsat water
     classification filtered by spectral turbidity signature, coastal elevation
-    mask, and JRC water occurrence range (permanent but not open deep water).
+    mask, JRC water occurrence range, and connected-component size filtering.
+
+    When Sentinel-2 is used (year >= 2016), the composite is reprojected to
+    30m to match Landsat spatial resolution. This ensures temporal consistency
+    in the timeseries by comparing like-with-like across the sensor transition.
 
     Returns a binary ee.Image (1 = probable aquaculture pond).
     """
@@ -108,6 +117,9 @@ def detect_aquaculture_ponds(year, region):
         renamed = cfg.SENTINEL2_BANDS["renamed"]
         col = col.select(original[:6], renamed[:6])
         composite = col.median().multiply(cfg.SENTINEL2_BANDS["scale_factor"]).clip(region)
+        # Resample S2 (10m native) to 30m to match Landsat resolution for
+        # temporal consistency across the sensor transition.
+        composite = composite.reproject(crs="EPSG:4326", scale=30)
     else:
         col = get_landsat_collection(
             f"{year}-11-01", f"{year + 1}-03-01", region
@@ -137,16 +149,24 @@ def detect_aquaculture_ponds(year, region):
     # Coastal elevation mask: ponds sited at low elevation
     coastal_mask = _get_coastal_dem_mask(region)
 
-    # Combine all criteria
+    # Combine spectral + occurrence + elevation criteria
     pond_candidate = (
         water_mask
         .And(turbid_mask)
         .And(occurrence_mask)
         .And(coastal_mask)
-        .rename("aquaculture_pond")
+        .selfMask()
     )
 
-    return pond_candidate.clip(region)
+    # Connected-component size filter: remove objects that are too small
+    # (noise/speckle) or too large (natural water bodies, not ponds).
+    # connectedPixelCount counts connected pixels up to SIZE_MAX_PIXELS + 1.
+    pixel_count = pond_candidate.connectedPixelCount(SIZE_MAX_PIXELS + 1)
+    size_mask = pixel_count.gte(SIZE_MIN_PIXELS).And(pixel_count.lte(SIZE_MAX_PIXELS))
+
+    pond_filtered = pond_candidate.updateMask(size_mask).rename("aquaculture_pond")
+
+    return pond_filtered.clip(region)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -192,28 +212,51 @@ def compute_aquaculture_timeseries(start_year, end_year, region, step=3):
 def detect_mangrove_to_aquaculture(region, baseline_year=1990, current_year=2020, scale=30):
     """
     Identify areas that were mangrove in baseline_year but became aquaculture
-    ponds by current_year. Uses Hansen forest cover as mangrove proxy in
-    coastal low-elevation zones, and current-year pond detection.
+    ponds by current_year.
+
+    Mangrove baseline reconstruction:
+        Uses Hansen treecover2000 combined with lossyear to reconstruct areas
+        that were forested at some point since 2000 (treecover2000 > 30% OR
+        forest loss recorded 2001-current_year). In the coastal, low-elevation
+        zone (<= 10m), this proxies mangrove extent.
+
+    Limitation: pre-2000 mangrove conversion (1990-2000) is NOT directly
+    observed. Hansen treecover2000 captures the state as of ~2000, so any
+    mangrove cleared before 2000 is invisible. The 1990 baseline_year is
+    therefore an approximation: the true baseline is ~2000 for the
+    reconstruction, and conversion estimates are conservative (undercount
+    areas cleared during the 1990s shrimp boom).
+
+    If Global Mangrove Watch (GMW) becomes reliably available on GEE
+    (cfg.GMW_MANGROVE), it should replace this approach for 1996+ baselines.
 
     Returns dict with conversion mask and area.
     """
-    # Mangrove baseline proxy: tree cover > 30% in coastal zone <= 10m elevation
+    # Hansen treecover2000: areas forested as of 2000
     treecover = ee.Image(cfg.GLOBAL_FOREST_CHANGE["image"]).select(
         cfg.GLOBAL_FOREST_CHANGE["bands"]["treecover2000"]
     ).clip(region)
-    dem = ee.Image(cfg.SRTM_DEM).select("elevation").clip(region)
-    coastal_forest = treecover.gt(30).And(dem.lte(10)).And(dem.gte(0))
 
-    # Forest loss before current_year (Hansen lossyear is years since 2000, 1-based)
+    # Hansen lossyear: forest loss year (1 = 2001, 2 = 2002, ...)
     loss_year = ee.Image(cfg.GLOBAL_FOREST_CHANGE["image"]).select(
         cfg.GLOBAL_FOREST_CHANGE["bands"]["lossyear"]
     ).clip(region)
-    years_since_baseline = current_year - 2000
-    lost_by_current = loss_year.gt(0).And(loss_year.lte(years_since_baseline))
 
-    # Mangrove in baseline: had tree cover in 2000 and either no loss yet, or
-    # loss happened after baseline. For 1990 baseline we use 2000 treecover as proxy.
-    was_mangrove = coastal_forest.rename("was_mangrove")
+    # Coastal elevation mask
+    dem = ee.Image(cfg.SRTM_DEM).select("elevation").clip(region)
+    coastal_mask = dem.lte(10).And(dem.gte(0))
+
+    # Reconstruct "was forested at some point" layer:
+    # Areas with tree cover > 30% in 2000, PLUS areas that lost forest
+    # between 2001 and current_year (they were forested before loss).
+    # Combined, this captures areas forested at any point 2000-current_year.
+    years_since_2000 = current_year - 2000
+    had_treecover_2000 = treecover.gt(30)
+    lost_forest = loss_year.gt(0).And(loss_year.lte(years_since_2000))
+    was_forested = had_treecover_2000.Or(lost_forest)
+
+    # Mangrove proxy: forested + coastal low-elevation
+    was_mangrove = was_forested.And(coastal_mask).rename("was_mangrove")
 
     # Current aquaculture ponds
     current_ponds = detect_aquaculture_ponds(current_year, region)
@@ -268,6 +311,57 @@ def compute_district_aquaculture(region, year=2020, scale=100):
         })
 
     return districts_fc.map(add_area)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Validation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def validate_against_reference(satellite_areas, reference_areas):
+    """
+    Compare satellite-derived aquaculture areas against reference data
+    (e.g., DoF census) for matched districts.
+
+    Args:
+        satellite_areas: dict of {district_name: area_km2} from satellite.
+        reference_areas: dict of {district_name: area_km2} from reference.
+
+    Returns:
+        dict with r_squared, rmse, mean_absolute_error, n, and per-district
+        errors. Only districts present in both dicts are compared.
+    """
+    common = sorted(set(satellite_areas) & set(reference_areas))
+    n = len(common)
+    if n == 0:
+        return {"r_squared": None, "rmse": None, "mean_absolute_error": None, "n": 0, "errors": {}}
+
+    sat = [satellite_areas[d] for d in common]
+    ref = [reference_areas[d] for d in common]
+
+    # Mean absolute error
+    abs_errors = [abs(s - r) for s, r in zip(sat, ref)]
+    mae = sum(abs_errors) / n
+
+    # RMSE
+    sq_errors = [(s - r) ** 2 for s, r in zip(sat, ref)]
+    rmse = math.sqrt(sum(sq_errors) / n)
+
+    # R squared
+    ref_mean = sum(ref) / n
+    ss_res = sum(sq_errors)
+    ss_tot = sum((r - ref_mean) ** 2 for r in ref)
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else None
+
+    errors = {d: {"satellite": s, "reference": r, "error": s - r}
+              for d, s, r in zip(common, sat, ref)}
+
+    return {
+        "r_squared": r_squared,
+        "rmse": rmse,
+        "mean_absolute_error": mae,
+        "n": n,
+        "errors": errors,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -38,12 +38,19 @@ def compute_savi(image, L=0.5):
 # MODIS Vegetation
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _mask_modis_vi_quality(img):
+    """Mask MODIS vegetation index pixels with poor quality (SummaryQA > 1)."""
+    qa = img.select("SummaryQA")
+    return img.updateMask(qa.lte(1))  # 0=good, 1=marginal, 2-3=bad
+
+
 def get_modis_ndvi_annual(year, region):
     """Get MODIS annual max NDVI composite."""
     col = (
         ee.ImageCollection(cfg.MODIS_NDVI["collection"])
         .filterDate(f"{year}-01-01", f"{year}-12-31")
         .filterBounds(region)
+        .map(_mask_modis_vi_quality)
         .select(cfg.MODIS_NDVI["ndvi_band"])
     )
     return col.max().multiply(cfg.MODIS_NDVI["scale_factor"]).clip(region).rename("ndvi")
@@ -55,6 +62,7 @@ def get_modis_evi_annual(year, region):
         ee.ImageCollection(cfg.MODIS_NDVI["collection"])
         .filterDate(f"{year}-01-01", f"{year}-12-31")
         .filterBounds(region)
+        .map(_mask_modis_vi_quality)
         .select(cfg.MODIS_NDVI["evi_band"])
     )
     return col.max().multiply(cfg.MODIS_NDVI["scale_factor"]).clip(region).rename("evi")
@@ -69,8 +77,10 @@ def compute_modis_ndvi_timeseries(region, start_year=2000, end_year=2024, step=1
                 ee.ImageCollection(cfg.MODIS_NDVI["collection"])
                 .filterDate(f"{year}-01-01", f"{year}-12-31")
                 .filterBounds(region)
+                .map(_mask_modis_vi_quality)
                 .select(cfg.MODIS_NDVI["ndvi_band"])
             )
+            ndvi_band = cfg.MODIS_NDVI["ndvi_band"]
             scaled = col.map(lambda img: img.multiply(cfg.MODIS_NDVI["scale_factor"]))
             annual_mean = scaled.mean().clip(region)
             annual_max = scaled.max().clip(region)
@@ -87,8 +97,8 @@ def compute_modis_ndvi_timeseries(region, start_year=2000, end_year=2024, step=1
             )
             series.append({
                 "year": year,
-                "mean_ndvi": stats_mean.get("NDVI"),
-                "max_ndvi": stats_max.get("NDVI"),
+                "mean_ndvi": stats_mean.get(ndvi_band),
+                "max_ndvi": stats_max.get(ndvi_band),
             })
         except Exception as e:
             print(f"  NDVI {year} skipped: {e}")
@@ -101,8 +111,9 @@ def compute_seasonal_ndvi(year, region, scale=1000):
         "pre_monsoon": (f"{year}-03-01", f"{year}-05-31"),
         "monsoon": (f"{year}-06-01", f"{year}-09-30"),
         "post_monsoon": (f"{year}-10-01", f"{year}-11-30"),
-        "winter": (f"{year}-12-01", f"{year + 1}-02-28"),
+        "winter": (f"{year}-12-01", f"{year + 1}-03-01"),
     }
+    ndvi_band = cfg.MODIS_NDVI["ndvi_band"]
     results = {"year": year}
     for season, (start, end) in seasons.items():
         try:
@@ -110,6 +121,7 @@ def compute_seasonal_ndvi(year, region, scale=1000):
                 ee.ImageCollection(cfg.MODIS_NDVI["collection"])
                 .filterDate(start, end)
                 .filterBounds(region)
+                .map(_mask_modis_vi_quality)
                 .select(cfg.MODIS_NDVI["ndvi_band"])
             )
             mean_img = col.mean().multiply(cfg.MODIS_NDVI["scale_factor"]).clip(region)
@@ -118,7 +130,7 @@ def compute_seasonal_ndvi(year, region, scale=1000):
                 geometry=region, scale=scale,
                 maxPixels=cfg.MAX_PIXELS, bestEffort=True,
             )
-            results[f"{season}_ndvi"] = stats.get("NDVI")
+            results[f"{season}_ndvi"] = stats.get(ndvi_band)
         except Exception as e:
             results[f"{season}_ndvi"] = None
     return results
@@ -157,6 +169,9 @@ def compute_forest_stats(region, tree_threshold=30, scale=None):
     Compute forest cover stats: initial cover, loss, gain, net change.
     tree_threshold: minimum canopy cover % to consider as forest.
     """
+    # Hansen default is 30% (IPCC/FAO international standard).
+    # Bangladesh Forest Department uses 10% (national reporting convention).
+    # Using 30% for international comparability; adjust for national statistics.
     if scale is None:
         scale = 300 if cfg.SCOPE == "national" else 30
     gfc = ee.Image(cfg.GLOBAL_FOREST_CHANGE["image"]).clip(region)
@@ -195,8 +210,10 @@ def compute_forest_loss_by_year(region, tree_threshold=30, scale=None):
     lossyear = gfc.select("lossyear")
     tree2000 = gfc.select("treecover2000").gte(tree_threshold)
 
+    # Hansen GFC lossyear: 1 = 2001, 23 = 2023
+    max_loss_year = cfg.GLOBAL_FOREST_CHANGE.get("max_loss_year", 23)
     results = []
-    for yr in range(1, 24):  # 2001-2023
+    for yr in range(1, max_loss_year + 1):
         yr_loss = lossyear.eq(yr).And(tree2000)
         area = yr_loss.multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=region,
@@ -228,6 +245,9 @@ def compute_crop_health_index(composite, region):
     Compute crop health using NDVI deviation from long-term mean.
     Uses a single year's composite vs MODIS long-term average.
     """
+    # WARNING: Cross-sensor NDVI comparison (input composite vs MODIS baseline).
+    # Spectral response differences introduce systematic bias.
+    # Use MODIS composites for both current and baseline for valid anomaly detection.
     ndvi = compute_ndvi(composite)
 
     # Long-term NDVI mean (2000-2020 from MODIS)

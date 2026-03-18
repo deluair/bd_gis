@@ -6,6 +6,15 @@ import ee
 import config as cfg
 
 
+# GHSL P2023A available epochs (5-year intervals)
+GHSL_EPOCHS = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
+
+
+def _snap_to_epoch(year):
+    """Snap a year to the nearest GHSL epoch."""
+    return min(GHSL_EPOCHS, key=lambda x: abs(x - year))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data Loading
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -15,9 +24,9 @@ def get_ghsl_built(year, region):
     Get GHSL built-up surface area for a specific epoch.
     Available epochs: 1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030.
     """
-    # Snap to nearest available epoch
-    epochs = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
-    epoch = min(epochs, key=lambda x: abs(x - year))
+    epoch = _snap_to_epoch(year)
+    if epoch != year:
+        print(f"  GHSL: requested {year}, snapped to epoch {epoch}")
     image_id = f"JRC/GHSL/P2023A/GHS_BUILT_S/{epoch}"
     return ee.Image(image_id).select(cfg.GHSL_BUILT["band"]).clip(region)
 
@@ -28,16 +37,18 @@ def get_ghsl_smod(year, region):
     Classes: 10=water, 11=very_low, 12=low, 13=rural, 21=suburban,
              22=semi_dense_urban, 23=dense_urban, 30=urban_centre.
     """
-    epochs = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
-    epoch = min(epochs, key=lambda x: abs(x - year))
+    epoch = _snap_to_epoch(year)
+    if epoch != year:
+        print(f"  GHSL: requested {year}, snapped to epoch {epoch}")
     image_id = f"JRC/GHSL/P2023A/GHS_SMOD/{epoch}"
     return ee.Image(image_id).select(cfg.GHSL_SMOD["band"]).clip(region)
 
 
 def get_ghsl_pop(year, region):
     """Get GHSL population grid for a specific epoch."""
-    epochs = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
-    epoch = min(epochs, key=lambda x: abs(x - year))
+    epoch = _snap_to_epoch(year)
+    if epoch != year:
+        print(f"  GHSL: requested {year}, snapped to epoch {epoch}")
     image_id = f"JRC/GHSL/P2023A/GHS_POP/{epoch}"
     return ee.Image(image_id).select(cfg.GHSL_POP["band"]).clip(region)
 
@@ -63,8 +74,10 @@ def compute_bui(image):
 # Analysis
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_builtup_area(year, region, scale=300 if cfg.SCOPE == "national" else 100):
+def compute_builtup_area(year, region, scale=None):
     """Compute total built-up area (km2) from GHSL for a year."""
+    if scale is None:
+        scale = 300 if cfg.SCOPE == "national" else 100
     built = get_ghsl_built(year, region)
     # GHSL built_surface is in m2 per pixel; sum and convert to km2
     stats = built.reduceRegion(
@@ -82,7 +95,8 @@ def compute_builtup_area(year, region, scale=300 if cfg.SCOPE == "national" else
 
 def compute_builtup_timeseries(region, scale=100):
     """Track built-up area growth over GHSL epochs."""
-    epochs = [1975, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020]
+    # Use canonical epoch list, exclude future projections (2025, 2030)
+    epochs = [e for e in GHSL_EPOCHS if e <= 2020]
     series = []
     for year in epochs:
         try:
@@ -93,8 +107,17 @@ def compute_builtup_timeseries(region, scale=100):
     return series
 
 
-def compute_urbanization_rate(year1, year2, region, scale=300 if cfg.SCOPE == "national" else 100):
+def compute_urbanization_rate(year1, year2, region, scale=None):
     """Compute annual urbanization rate between two epochs."""
+    if scale is None:
+        scale = 300 if cfg.SCOPE == "national" else 100
+
+    # Check that the two years don't snap to the same GHSL epoch
+    epoch1 = _snap_to_epoch(year1)
+    epoch2 = _snap_to_epoch(year2)
+    if epoch1 == epoch2:
+        print(f"  WARNING: Both years ({year1}, {year2}) snap to GHSL epoch {epoch1}")
+
     built1 = get_ghsl_built(year1, region)
     built2 = get_ghsl_built(year2, region)
 
@@ -130,9 +153,10 @@ def classify_urban_expansion(year1, year2, region):
     built1 = get_ghsl_built(year1, region)
     built2 = get_ghsl_built(year2, region)
 
-    # Consider pixels with > 0 m2 built-up as urban
-    urban1 = built1.gt(0)
-    urban2 = built2.gt(0)
+    # Minimum built-surface threshold: 10 m2 per 100m pixel (noise floor)
+    # GHSL at 100m: minimum mapping unit = 0.01 km2 (1 pixel)
+    urban1 = built1.gt(10)
+    urban2 = built2.gt(10)
     new_urban = urban2.And(urban1.Not()).rename("new_urban")
     lost_urban = urban1.And(urban2.Not()).rename("lost_urban")
 

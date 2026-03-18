@@ -27,24 +27,33 @@ def compute_water_occurrence(start_year, end_year, region=None, scale=30):
     water_sum = ee.Image.constant(0).toFloat()
     obs_count = ee.Image.constant(0).toFloat()
     valid_years = 0
+    skipped_years = []
 
     for year in range(start_year, end_year + 1):
         try:
-            start = f"{year}-01-01"
-            end = f"{year}-12-31"
+            # Use dry season (Nov-Feb) to capture persistent/permanent water
+            # Monsoon flooding would inflate occurrence artificially
+            start = f"{year}-11-01"
+            end = f"{year + 1}-03-01"  # exclusive end, handles leap years
             col = get_landsat_collection(start, end, region)
-            # Check collection size to skip empty years
-            size = col.size().getInfo()
-            if size == 0:
-                continue
+            # Check collection size server-side to avoid per-year getInfo round-trips
+            col_size = col.size()
+            # Use ee.Algorithms.If for lazy eval: only compute composite if images exist
+            has_images = col_size.gt(0)
             composite = make_composite(col)
             # Use fixed thresholds to avoid Otsu failures on sparse data
             water = classify_water(composite, region=region, method="fixed")
-            water_sum = water_sum.add(water)
-            obs_count = obs_count.add(ee.Image.constant(1))
+            # Mask result if collection was empty (server-side guard)
+            water_masked = water.updateMask(ee.Image.constant(has_images))
+            water_sum = water_sum.add(water_masked.unmask(0))
+            obs_count = obs_count.add(ee.Image.constant(1).updateMask(ee.Image.constant(has_images)).unmask(0))
             valid_years += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  Water occurrence {year} skipped: {e}")
+            skipped_years.append(year)
+
+    if skipped_years:
+        print(f"  Water occurrence: {len(skipped_years)} years skipped: {skipped_years}")
 
     if valid_years == 0:
         # Return zeros if no valid years found
@@ -86,12 +95,18 @@ def classify_water_persistence(occurrence_image):
 
 def get_decade_ranges():
     """Return list of (start_year, end_year, label) tuples for each decade."""
-    return [
-        (1985, 1994, "1985-1994"),
-        (1995, 2004, "1995-2004"),
-        (2005, 2014, "2005-2014"),
-        (2015, 2025, "2015-2025"),
+    ranges = [
+        (1985, 1994),
+        (1995, 2004),
+        (2005, 2014),
+        (2015, 2025),
     ]
+    result = []
+    for start, end in ranges:
+        # Cap last decade at analysis end year to avoid incomplete period
+        end = min(end, cfg.ANALYSIS_END_YEAR)
+        result.append((start, end, f"{start}-{end}"))
+    return result
 
 
 def compute_decade_water_occurrence(region=None):
@@ -120,7 +135,7 @@ def compute_change_map(occ_early, occ_late):
     return occ_late.subtract(occ_early).rename("water_change")
 
 
-def classify_change(change_image, threshold=0.25):
+def classify_change(change_image, threshold=cfg.SEASONAL_WATER_MIN):
     """
     Classify change into categories:
     - 2: Significant water gain (> +threshold)
@@ -164,7 +179,17 @@ def compute_all_decade_changes(region=None):
             "late_occ": decade_occ[late_label],
         })
 
-    return {"decade_occurrences": decade_occ, "changes": changes}
+    results = {"decade_occurrences": decade_occ, "changes": changes}
+
+    # Validate latest decade occurrence against JRC Global Surface Water
+    latest_label = labels[-1]
+    try:
+        validation = validate_against_jrc(decade_occ[latest_label], region)
+        results["jrc_validation"] = validation
+    except Exception as e:
+        print(f"  JRC validation skipped: {e}")
+
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -230,10 +255,12 @@ def validate_against_jrc(our_occurrence, region=None, scale=300):
     return correlation
 
 
-def compute_area_stats(persistence_image, region, scale=300 if cfg.SCOPE == "national" else 30):
+def compute_area_stats(persistence_image, region, scale=None):
     """
     Compute area (km²) for each water persistence category.
     """
+    if scale is None:
+        scale = 300 if cfg.SCOPE == "national" else 30
     stats = {}
     for class_val, label in [(3, "permanent"), (2, "seasonal"), (1, "rare")]:
         mask = persistence_image.eq(class_val)

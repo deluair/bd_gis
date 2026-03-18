@@ -2,7 +2,6 @@
 River erosion and channel migration analysis – extract centerlines,
 compute lateral migration, and identify erosion hotspots.
 """
-import signal
 import ee
 import config as cfg
 
@@ -38,8 +37,8 @@ from water_classification import classify_water
 def get_river_roi(river_name):
     """Create a buffered corridor geometry for a named river."""
     river = cfg.RIVERS[river_name]
-    points = [ee.Geometry.Point(lon, lat) for lat, lon in river["points"]]
-    line = ee.Geometry.MultiPoint(points).convexHull()
+    coords = [[lon, lat] for lat, lon in river["points"]]
+    line = ee.Geometry.LineString(coords)
     return line.buffer(river["buffer_m"])
 
 
@@ -62,7 +61,7 @@ def get_decadal_water_mask(year, river_roi, window=2):
     start = f"{year - effective_window}-12-01"
     # Clamp end date to today so we never query into the future
     max_end = datetime.date.today().isoformat()
-    end = min(f"{year + effective_window}-02-28", max_end)
+    end = min(f"{year + effective_window}-03-01", max_end)
     # Clamp start to Landsat 5 launch (1984-03-01)
     if start < "1984-03-01":
         start = "1984-03-01"
@@ -85,24 +84,26 @@ def get_decadal_water_mask(year, river_roi, window=2):
     return water.unmask(0)
 
 
-def extract_centerline(water_mask, river_roi, scale=30):
-    """
-    Extract river centerline by morphological thinning of the water mask.
-    Uses iterative erosion to approximate the skeleton/medial axis.
-    """
-    # Focal erosion iterations to thin the mask
-    kernel = ee.Kernel.circle(radius=scale, units="meters")
-    thinned = water_mask
-    for _ in range(5):
-        eroded = thinned.focalMin(kernel=kernel)
-        thinned = thinned.subtract(eroded).gt(0).Or(eroded)
-
-    # The skeleton is the set of pixels that remain after thinning
-    skeleton = water_mask.subtract(
-        water_mask.focalMin(kernel=ee.Kernel.circle(radius=scale * 2, units="meters"))
-    ).gt(0).selfMask()
-
-    return skeleton.rename("centerline")
+def extract_centerline(water_mask, river_roi, iterations=5):
+    """Extract approximate centerline via iterative erosion."""
+    # Iteratively erode until the water mask reduces to a thin line
+    eroded = water_mask
+    for _ in range(iterations):
+        next_eroded = eroded.focal_min(kernel=ee.Kernel.circle(1))
+        # Stop if erosion would eliminate all pixels
+        eroded = ee.Image(ee.Algorithms.If(
+            next_eroded.reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=water_mask.geometry(),
+                scale=300,
+                bestEffort=True
+            ).values().get(0),
+            next_eroded,
+            eroded
+        ))
+    # Centerline = boundary of the maximally eroded water body
+    centerline = eroded.subtract(eroded.focal_min(1)).gt(0)
+    return centerline.rename("centerline")
 
 
 def get_decadal_centerlines(river_name, decades=None):
@@ -139,10 +140,10 @@ def compute_channel_migration(water_masks, decades=None):
         mask1 = water_masks[y1]
         mask2 = water_masks[y2]
 
-        # Erosion: was water in y1 but not in y2 (land gain / bank erosion on opposite side)
-        eroded = mask1.And(mask2.Not()).rename("eroded")
-        # Accretion: was not water in y1 but is water in y2
-        accreted = mask2.And(mask1.Not()).rename("accreted")
+        # Channel abandonment: was water in y1, now land in y2 (river retreated)
+        channel_abandonment = mask1.And(mask2.Not()).rename("channel_abandonment")
+        # Bank erosion: was land in y1, now water in y2 (river expanded)
+        bank_erosion = mask2.And(mask1.Not()).rename("bank_erosion")
         # Net change
         net_change = mask2.subtract(mask1).rename("net_change")
 
@@ -150,16 +151,16 @@ def compute_channel_migration(water_masks, decades=None):
             "period": f"{y1}-{y2}",
             "start_year": y1,
             "end_year": y2,
-            "eroded": eroded,
-            "accreted": accreted,
+            "channel_abandonment": channel_abandonment,
+            "bank_erosion": bank_erosion,
             "net_change": net_change,
         })
     return migrations
 
 
-def compute_erosion_area(eroded_mask, region, scale=30):
+def compute_erosion_area(erosion_mask, region, scale=30):
     """Calculate total erosion area in hectares."""
-    area = eroded_mask.multiply(ee.Image.pixelArea()).reduceRegion(
+    area = erosion_mask.multiply(ee.Image.pixelArea()).reduceRegion(
         reducer=ee.Reducer.sum(),
         geometry=region,
         scale=scale,
@@ -168,13 +169,13 @@ def compute_erosion_area(eroded_mask, region, scale=30):
     )
     # Guard against null result (e.g. when reduceRegion returns None for
     # the band due to computation limits or fully masked input)
-    raw = area.get("eroded")
+    raw = area.get("bank_erosion")
     return ee.Number(ee.Algorithms.If(raw, raw, 0)).divide(10000)  # m² to ha
 
 
-def compute_erosion_rate(eroded_mask, region, years_elapsed, scale=30):
+def compute_erosion_rate(erosion_mask, region, years_elapsed, scale=30):
     """Calculate erosion rate in hectares per year."""
-    area_ha = compute_erosion_area(eroded_mask, region, scale)
+    area_ha = compute_erosion_area(erosion_mask, region, scale)
     return area_ha.divide(years_elapsed)
 
 
@@ -185,7 +186,7 @@ def identify_erosion_hotspots(migrations, river_roi, scale=30):
     """
     hotspot = ee.Image.constant(0).clip(river_roi)
     for m in migrations:
-        hotspot = hotspot.add(m["eroded"])
+        hotspot = hotspot.add(m["bank_erosion"])
     return hotspot.rename("erosion_frequency")
 
 
@@ -233,7 +234,7 @@ def run_river_analysis(river_name):
     rates = []
     for m in migrations:
         years_elapsed = m["end_year"] - m["start_year"]
-        rate = compute_erosion_rate(m["eroded"], river_roi, years_elapsed, scale)
+        rate = compute_erosion_rate(m["bank_erosion"], river_roi, years_elapsed, scale)
         rates.append({"period": m["period"], "rate_ha_per_year": rate})
 
     return {

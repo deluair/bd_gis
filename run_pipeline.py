@@ -914,12 +914,12 @@ def run_airquality():
         except Exception as e:
             print(f"  Export {pollutant} hotspots skipped: {e}")
 
-    # Export AQI composite
-    if results.get("aqi_composite"):
+    # Export pollutant stack
+    if results.get("pollutant_stack"):
         try:
-            export_to_drive(results["aqi_composite"], "aqi_composite_2023", region=region)
+            export_to_drive(results["pollutant_stack"], "pollutant_stack_2023", region=region)
         except Exception as e:
-            print(f"  Export AQI composite skipped: {e}")
+            print(f"  Export pollutant stack skipped: {e}")
 
     print("\nAir quality analysis complete.")
 
@@ -1162,26 +1162,58 @@ def run_crops():
 
     results = run_crop_detection_analysis(region)
 
-    # Export rice area time series
-    if results.get("rice_timeseries"):
-        ts_resolved = []
-        for entry in results["rice_timeseries"]:
-            ts_resolved.append({
-                "year": entry["year"],
-                "season": entry.get("season", "monsoon"),
-                "rice_area_km2": _resolve_ee(entry.get("rice_area_km2")),
-            })
-        export_csv(ts_resolved, "rice_area_timeseries.csv", "crops")
+    # Export aman rice area time series
+    for season_key, filename in [("aman_timeseries", "aman_rice_timeseries.csv"),
+                                  ("boro_timeseries", "boro_rice_timeseries.csv")]:
+        if results.get(season_key):
+            ts_resolved = []
+            for entry in results[season_key]:
+                ts_resolved.append({
+                    "year": _resolve_ee(entry.get("year", entry.get("year"))),
+                    "rice_area_km2": _resolve_ee(entry.get("rice_area_km2")),
+                })
+            if ts_resolved:
+                export_csv(ts_resolved, filename, "crops")
 
-    # Export crop type area stats
-    if results.get("crop_area_stats"):
-        crop_resolved = []
-        for entry in results["crop_area_stats"]:
-            crop_resolved.append({
-                "crop_type": entry.get("crop_type", ""),
-                "area_km2": _resolve_ee(entry.get("area_km2")),
-            })
-        export_csv(crop_resolved, "crop_area_stats.csv", "crops")
+    # Export crop type area stats (key: crop_stats_2023)
+    if results.get("crop_stats_2023"):
+        stats = results["crop_stats_2023"]
+        if isinstance(stats, dict):
+            crop_resolved = []
+            for crop_type, area in stats.items():
+                crop_resolved.append({
+                    "crop_type": crop_type,
+                    "area_km2": _resolve_ee(area),
+                })
+            if crop_resolved:
+                export_csv(crop_resolved, "crop_area_stats_2023.csv", "crops")
+
+    # Export NDVI profile
+    if results.get("ndvi_profile_2023"):
+        profile = results["ndvi_profile_2023"]
+        if isinstance(profile, list):
+            profile_resolved = []
+            for entry in profile:
+                profile_resolved.append({
+                    "month": _resolve_ee(entry.get("month")),
+                    "mean_ndvi": _resolve_ee(entry.get("mean_ndvi")),
+                })
+            if profile_resolved:
+                export_csv(profile_resolved, "ndvi_crop_profile_2023.csv", "crops")
+
+    # Export yield proxies
+    if results.get("yield_proxies"):
+        yield_resolved = []
+        for entry in results["yield_proxies"]:
+            if isinstance(entry, dict):
+                yield_resolved.append({
+                    "year": _resolve_ee(entry.get("year")),
+                    "season": entry.get("season", ""),
+                    "mean_ndvi": _resolve_ee(entry.get("mean_ndvi")),
+                    "max_ndvi": _resolve_ee(entry.get("max_ndvi")),
+                })
+        if yield_resolved:
+            export_csv(yield_resolved, "yield_proxies.csv", "crops")
 
     # Export rice paddy mask
     if results.get("rice_paddy_mask"):

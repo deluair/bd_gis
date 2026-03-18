@@ -53,6 +53,10 @@ def otsu_threshold(image, band_name, region, scale=30):
     Compute Otsu's optimal threshold for a single-band image over a region.
     Uses GEE server-side histogram computation.
     Returns an ee.Number threshold.
+
+    WARNING: National scope (>10,000 km2) will exceed GEE memory for 30m Otsu.
+    Use otsu_threshold_safe() which falls back to fixed thresholds on failure,
+    or set config.DEFAULT_THRESHOLD_METHOD = "fixed" for national runs.
     """
     histogram = image.select(band_name).reduceRegion(
         reducer=ee.Reducer.histogram(255, 2).combine("mean", sharedInputs=True),
@@ -94,7 +98,8 @@ def otsu_threshold(image, band_name, region, scale=30):
         )
 
     bss = indices.map(_compute_variance)
-    return means.sort(ee.Array(bss)).get([-1])
+    # Find the threshold corresponding to maximum between-class variance
+    return means.get([ee.Array(bss).argmax().get([0])])
 
 
 def otsu_threshold_safe(image, band_name, region, scale=30, default=0.0):
@@ -173,7 +178,9 @@ def classify_water(image, region=None, scale=30, method=None):
 
 def compute_water_area(water_mask, region, scale=30):
     """Compute total water area in square kilometers within a region."""
-    pixel_area = water_mask.multiply(ee.Image.pixelArea())
+    # Remove isolated single-pixel detections (noise, shadow)
+    water_clean = water_mask.focal_min(1).focal_max(1)
+    pixel_area = water_clean.multiply(ee.Image.pixelArea())
     area = pixel_area.reduceRegion(
         reducer=ee.Reducer.sum(),
         geometry=region,

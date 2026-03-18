@@ -11,12 +11,7 @@ import config as cfg
 # Solar Energy Potential
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# NASA POWER / ERA5 shortwave radiation as solar proxy
-SOLAR_RADIATION = {
-    "collection": "ECMWF/ERA5_LAND/MONTHLY_AGGR",
-    "band": "surface_net_solar_radiation_sum",
-    "scale": 11132,
-}
+# ERA5 solar radiation config lives in config.py (cfg.SOLAR_RADIATION)
 
 
 def compute_solar_irradiance(year, region, scale=10000):
@@ -25,13 +20,15 @@ def compute_solar_irradiance(year, region, scale=10000):
     Higher values = better solar energy potential.
     """
     col = (
-        ee.ImageCollection(SOLAR_RADIATION["collection"])
-        .filterDate(f"{year}-01-01", f"{year}-12-31")
+        ee.ImageCollection(cfg.SOLAR_RADIATION["collection"])
+        .filterDate(f"{year}-01-01", f"{year+1}-01-01")
         .filterBounds(region)
-        .select(SOLAR_RADIATION["band"])
+        .select(cfg.SOLAR_RADIATION["band"])
     )
-    # Monthly sum → daily average (J/m2 → W/m2 roughly: divide by seconds in month)
-    annual_mean = col.mean().clip(region).rename("solar_irradiance")
+    # ERA5 monthly sums are in J/m2. Convert to mean W/m2.
+    # Average seconds per month = 365.25 * 24 * 3600 / 12 ~ 2.628e6
+    SECONDS_PER_MONTH = 2.628e6
+    annual_mean = col.mean().divide(SECONDS_PER_MONTH).clip(region).rename("solar_irradiance_wm2")
     return annual_mean
 
 
@@ -44,18 +41,18 @@ def compute_solar_potential_map(region, year=2023, scale=10000):
 
     # Cloud cover penalty: use rainy months (Jun-Sep) vs dry (Nov-Feb)
     dry_season = (
-        ee.ImageCollection(SOLAR_RADIATION["collection"])
-        .filterDate(f"{year}-11-01", f"{year + 1}-02-28")
+        ee.ImageCollection(cfg.SOLAR_RADIATION["collection"])
+        .filterDate(f"{year}-11-01", f"{year + 1}-03-01")
         .filterBounds(region)
-        .select(SOLAR_RADIATION["band"])
+        .select(cfg.SOLAR_RADIATION["band"])
         .mean()
         .clip(region)
     )
     monsoon = (
-        ee.ImageCollection(SOLAR_RADIATION["collection"])
-        .filterDate(f"{year}-06-01", f"{year}-09-30")
+        ee.ImageCollection(cfg.SOLAR_RADIATION["collection"])
+        .filterDate(f"{year}-06-01", f"{year}-10-01")
         .filterBounds(region)
-        .select(SOLAR_RADIATION["band"])
+        .select(cfg.SOLAR_RADIATION["band"])
         .mean()
         .clip(region)
     )
@@ -63,15 +60,17 @@ def compute_solar_potential_map(region, year=2023, scale=10000):
     # Seasonal variation ratio (lower = more consistent)
     consistency = monsoon.divide(dry_season.max(ee.Image.constant(1))).clamp(0, 1).rename("solar_consistency")
 
-    # Available land (exclude water and dense urban)
+    # Exclude water (80), built-up (50), and cropland (40) from solar land availability
     from land_cover import get_esa_worldcover
     try:
         wc = get_esa_worldcover(2021, region)
-        available = wc.neq(80).And(wc.neq(50))  # not water, not built-up
+        available = wc.neq(80).And(wc.neq(50)).And(wc.neq(40))
     except Exception:
         available = ee.Image.constant(1).clip(region)
 
-    solar_score = irradiance.unitScale(0, 20000000).clamp(0, 1).multiply(
+    # Bangladesh annual mean GHI: ~170-220 W/m2
+    irradiance_scaled = irradiance.unitScale(0, 250).clamp(0, 1)
+    solar_score = irradiance_scaled.multiply(consistency).multiply(
         available.unmask(0)
     ).rename("solar_potential")
 
@@ -92,8 +91,8 @@ def compute_solar_stats(region, year=2023, scale=10000):
     )
     return {
         "year": year,
-        "mean_irradiance": stats.get("solar_irradiance_mean"),
-        "max_irradiance": stats.get("solar_irradiance_max"),
+        "mean_irradiance": stats.get("solar_irradiance_wm2_mean"),
+        "max_irradiance": stats.get("solar_irradiance_wm2_max"),
     }
 
 
@@ -108,7 +107,7 @@ def compute_wind_speed(year, region, scale=10000):
     """
     col = (
         ee.ImageCollection(cfg.ERA5_LAND["collection"])
-        .filterDate(f"{year}-01-01", f"{year}-12-31")
+        .filterDate(f"{year}-01-01", f"{year+1}-01-01")
         .filterBounds(region)
     )
 
@@ -139,12 +138,15 @@ def compute_wind_potential(region, year=2023, scale=10000):
 
 def estimate_biomass(year, region, scale=1000):
     """
-    Estimate above-ground biomass proxy using NDVI.
-    Biomass ~ NDVI^2 (empirical relationship for tropical regions).
+    Estimate above-ground biomass proxy from NDVI.
+
+    WARNING: This is a rough spectral proxy, NOT a validated AGB estimate.
+    For quantitative biomass, use GEDI L4A (LARSE/GEDI/GEDI04_A_002_MONTHLY)
+    or calibrated allometric models. Values are in arbitrary relative units.
     """
     from vegetation import get_modis_ndvi_annual
     ndvi = get_modis_ndvi_annual(year, region)
-    biomass = ndvi.pow(2).multiply(100).rename("biomass_proxy")  # arbitrary units
+    biomass = ndvi.pow(2).multiply(100).rename("biomass_proxy")
     return biomass
 
 
@@ -175,13 +177,14 @@ def compute_energy_access(year, region, scale=1000):
     from nightlights import get_nightlights, classify_electrification
 
     try:
-        elec = classify_electrification(year, region, threshold=0.5)
+        elec = classify_electrification(year, region)
     except Exception:
         return None
 
     lights = get_nightlights(year, region)
     band_name = lights.bandNames().getInfo()[0]
-    light_quality = lights.select(band_name).unitScale(0, 30).clamp(0, 1).rename("light_quality")
+    lo, hi = (0, 63) if year <= 2013 else (0, 200)
+    light_quality = lights.select(band_name).unitScale(lo, hi).clamp(0, 1).rename("light_quality")
 
     # Energy access score: electrified * light quality
     access = elec["mask"].toFloat().multiply(light_quality).rename("energy_access")

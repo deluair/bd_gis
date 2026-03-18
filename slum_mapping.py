@@ -11,6 +11,12 @@ Key indicators for slum identification:
 - Proximity to water bodies, railways, industrial areas
 - High LST (lack of green space / dense materials)
 """
+
+# RESOLUTION CAVEAT: Landsat at 30m cannot resolve individual slum structures
+# (which require sub-5m imagery). This module detects "dense urban / potentially
+# informal settlement" areas as a proxy. Outputs should be labeled as proxy
+# indices, not definitive slum maps. See Kuffer et al. 2016 for resolution
+# requirements in slum mapping.
 import ee
 import config as cfg
 
@@ -29,6 +35,9 @@ KNOWN_SLUM_AREAS = {
     "Gabtoli Slum (Dhaka)":   {"lat": 23.78, "lon": 90.34, "radius": 1000},
     "Chittagong Port Slums":  {"lat": 22.33, "lon": 91.80, "radius": 1500},
     "Khulna Slums":           {"lat": 22.82, "lon": 89.55, "radius": 1500},
+    "Kazir Bazar (Sylhet)":   {"lat": 24.89, "lon": 91.87, "radius": 1000},
+    "Padma Embankment (Rajshahi)": {"lat": 24.37, "lon": 88.60, "radius": 1200},
+    "Rail-side Slums (Rangpur)":   {"lat": 25.74, "lon": 89.25, "radius": 1000},
 }
 
 
@@ -104,13 +113,17 @@ def compute_lst_anomaly(year, region, scale=1000):
 
 def compute_population_density_indicator(year, region):
     """High population density relative to built-up area."""
-    from poverty import get_population_density, get_built_fraction
+    from poverty import get_population_density
+    from urbanization import get_ghsl_built
     pop = get_population_density(year, region)
-    built = get_built_fraction(year, region)
+    built = get_ghsl_built(year, region)
 
-    # Population per unit of built-up area (overcrowding indicator)
-    built_safe = built.max(ee.Image.constant(0.01))
-    overcrowding = pop.divide(built_safe).unitScale(0, 50000).clamp(0, 1).rename("overcrowding")
+    # pop = WorldPop people per 100m pixel (typically 0-250 in Dhaka)
+    # built = GHSL m2 of built surface per 100m pixel (typically 0-10000)
+    # Ratio = people per m2 of built surface (typically 0-0.1)
+    # Normalization should use range appropriate to these units
+    built_safe = built.max(ee.Image.constant(1))
+    overcrowding = pop.divide(built_safe).unitScale(0, 0.1).clamp(0, 1).rename("overcrowding")
     return overcrowding
 
 
@@ -119,14 +132,15 @@ def compute_light_irregularity(year, region):
     Low nighttime light per built-up area = poor infrastructure quality.
     Slums may have electricity but lower/irregular intensity.
     """
-    from nightlights import get_nightlights
+    from nightlights import get_nightlights, _sensor_scale_range
     from urbanization import get_ghsl_built
 
     lights = get_nightlights(year, region)
     built = get_ghsl_built(year, region)
 
     band_name = lights.bandNames().getInfo()[0]
-    light_norm = lights.select(band_name).unitScale(0, 63).clamp(0, 1)
+    lo, hi = _sensor_scale_range(year)
+    light_norm = lights.select(band_name).unitScale(lo, hi).clamp(0, 1)
 
     built_norm = built.unitScale(0, 10000).clamp(0, 1)
     built_safe = built_norm.max(ee.Image.constant(0.01))
@@ -157,48 +171,58 @@ def compute_slum_index(year, region, scale=100):
     """
     indicators = []
     weights = []
+    included_indicators = []
 
     # 1. Building density (normalized to 0-1)
     try:
         density = compute_building_density(year, region)
         density_norm = density.unitScale(0, 5000).clamp(0, 1).rename("density_norm")
         indicators.append(density_norm)
+        included_indicators.append("building_density")
         weights.append(0.25)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: building_density failed ({e}), excluded from composite")
 
     # 2. Vegetation deficit
     try:
         veg_def = compute_vegetation_deficit(year, region)
         indicators.append(veg_def)
+        included_indicators.append("vegetation_deficit")
         weights.append(0.20)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: vegetation_deficit failed ({e}), excluded from composite")
 
     # 3. Population overcrowding
     try:
         overcrowding = compute_population_density_indicator(year, region)
         indicators.append(overcrowding)
+        included_indicators.append("overcrowding")
         weights.append(0.25)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: overcrowding failed ({e}), excluded from composite")
 
     # 4. LST anomaly (high temp = slum-like)
     try:
         lst_anom = compute_lst_anomaly(year, region)
         lst_norm = lst_anom.unitScale(-5, 5).clamp(0, 1).rename("lst_norm")
         indicators.append(lst_norm)
+        included_indicators.append("lst_anomaly")
         weights.append(0.15)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: lst_anomaly failed ({e}), excluded from composite")
 
     # 5. Light infrastructure deficit
     try:
         light_def = compute_light_irregularity(year, region)
         indicators.append(light_def)
+        included_indicators.append("light_deficit")
         weights.append(0.15)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: light_deficit failed ({e}), excluded from composite")
+
+    # NOTE: compute_texture_heterogeneity() is available but not included in
+    # the composite due to Landsat 30m resolution limitations for texture-based
+    # slum detection. Include when Sentinel-2 10m composites are used.
 
     if not indicators:
         return None
@@ -218,6 +242,8 @@ def compute_slum_index(year, region, scale=100):
     except Exception:
         pass
 
+    print(f"  Slum index indicators included: {included_indicators}")
+    slum_index = slum_index.set("indicators_included", included_indicators)
     return slum_index
 
 
