@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 outputs/FINDINGS_REPORT.html
 local_data/
+outputs/
