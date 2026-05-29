@@ -298,6 +298,21 @@ VIIRS_DNB = {
     "years": (2014, 2025),
 }
 
+# Sentinel-1 SAR (all-weather flood). COPERNICUS/S1_GRD is C-band SAR, cloud
+# penetrating. Smooth open water has low backscatter, so VV below a threshold
+# marks inundation. The -17 dB default is a literature value (UN-SPIDER
+# recommended practice for S1 flood mapping); it is a starting point and should
+# be calibrated against known water before production use.
+SENTINEL1_GRD = {
+    "collection": "COPERNICUS/S1_GRD",
+    "bands": ("VV", "VH"),
+    "instrument_mode": "IW",
+    "years": (2015, 2024),
+    "vv_water_threshold_db": -17,
+    "speckle_radius_m": 50,
+    "scale": 10,
+}
+
 # ── Land Cover / Land Use ───────────────────────────────────────────────────
 MODIS_LANDCOVER = {
     "collection": "MODIS/061/MCD12Q1",

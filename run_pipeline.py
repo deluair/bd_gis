@@ -307,6 +307,46 @@ def run_rivers():
     print("\nRiver analysis complete.")
 
 
+def run_sar():
+    """Sentinel-1 SAR all-weather flood mapping (cloud-penetrating)."""
+    from sar_flood import get_annual_sar_flood
+
+    print("\n" + "=" * 60)
+    print(f"SENTINEL-1 SAR FLOOD MAPPING ({cfg.scope_label()})")
+    print("=" * 60)
+
+    init_gee()
+    region = get_study_area()
+    ensure_output_dir("sar_flood")
+
+    start, end = cfg.SENTINEL1_GRD["years"]
+    step = 2 if cfg.SCOPE == "national" else 1
+    print(f"\nBuilding SAR flood time series {start}-{end} (every {step} years)...")
+    time_series = []
+    for year in range(start, end + 1, step):
+        print(f"  Processing {year}...")
+        try:
+            r = get_annual_sar_flood(year, region)
+            dry_val = _resolve_ee(r["dry_area_km2"])
+            monsoon_val = _resolve_ee(r["monsoon_area_km2"])
+            seasonal_val = _resolve_ee(r["seasonal_area_km2"])
+            if dry_val is not None and monsoon_val is not None:
+                time_series.append({
+                    "year": year,
+                    "dry_area_km2": dry_val,
+                    "monsoon_area_km2": monsoon_val,
+                    "seasonal_area_km2": seasonal_val,
+                })
+                print(f"    Dry: {dry_val:.1f} km2, Monsoon: {monsoon_val:.1f} km2")
+            else:
+                print("    Skipped: could not resolve area values")
+        except Exception as e:
+            print(f"    Skipped: {e}")
+
+    export_csv(time_series, "sar_flood_time_series.csv", "sar_flood")
+    print(f"\nSAR flood: {len(time_series)} years written to outputs/sar_flood/")
+
+
 def run_floods():
     """Flood extent mapping and time series analysis."""
     from flood_analysis import (
@@ -2331,6 +2371,7 @@ def run_full_extended():
         ("poverty", run_poverty),
         ("rivers", run_rivers),
         ("floods", run_floods),
+        ("sar_flood", run_sar),
         ("changes", run_changes),
         ("haors", run_haors),
         ("infrastructure", run_infrastructure),
@@ -2407,6 +2448,7 @@ def main():
     parser.add_argument("--full", action="store_true", help="Full water analysis")
     parser.add_argument("--rivers", action="store_true", help="River analysis only")
     parser.add_argument("--floods", action="store_true", help="Flood analysis only")
+    parser.add_argument("--sar", action="store_true", help="Sentinel-1 SAR all-weather flood mapping")
     parser.add_argument("--changes", action="store_true", help="Water change detection only")
     parser.add_argument("--haors", action="store_true", help="Haor/wetland analysis only")
 
@@ -2461,6 +2503,8 @@ def main():
     elif args.rivers:
         init_gee()
         run_rivers()
+    elif args.sar:
+        run_sar()
     elif args.floods:
         run_floods()
     elif args.changes:
