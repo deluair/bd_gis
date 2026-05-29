@@ -30,3 +30,20 @@ def test_insufficient_data_raises():
 def test_zero_variance_raises():
     with pytest.raises(ZeroVariance):
         pearson_r([1, 1, 1], [1, 2, 3])
+
+
+def test_categorical_overall_accuracy():
+    from validation.calibrate import categorical_stats
+    pred = ["water", "urban", "crop", "water"]
+    ref = ["water", "urban", "urban", "water"]
+    s = categorical_stats(pred, ref)
+    assert s["overall_accuracy"] == pytest.approx(0.75)
+    assert s["n"] == 4
+    assert s["per_class"]["water"]["user_acc"] == pytest.approx(1.0)
+    assert s["per_class"]["water"]["producer_acc"] == pytest.approx(1.0)
+
+
+def test_categorical_insufficient_data_raises():
+    from validation.calibrate import categorical_stats, InsufficientData
+    with pytest.raises(InsufficientData):
+        categorical_stats(["a", "b"], ["a", "b"])

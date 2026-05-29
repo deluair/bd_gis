@@ -53,3 +53,24 @@ def continuous_stats(pairs):
         "bias": bias(pred, ref),
         "n": len(pairs),
     }
+
+
+def categorical_stats(pred_labels, ref_labels):
+    """Overall accuracy and per-class user/producer accuracy."""
+    if len(pred_labels) != len(ref_labels):
+        raise ValueError("label lists must be the same length")
+    if len(pred_labels) < 3:
+        raise InsufficientData(f"need at least 3 samples, got {len(pred_labels)}")
+    n = len(pred_labels)
+    correct = sum(1 for p, r in zip(pred_labels, ref_labels) if p == r)
+    labels = sorted(set(ref_labels) | set(pred_labels))
+    per_class = {}
+    for lab in labels:
+        tp = sum(1 for p, r in zip(pred_labels, ref_labels) if p == lab and r == lab)
+        pred_lab = sum(1 for p in pred_labels if p == lab)
+        ref_lab = sum(1 for r in ref_labels if r == lab)
+        per_class[lab] = {
+            "user_acc": (tp / pred_lab) if pred_lab else 0.0,
+            "producer_acc": (tp / ref_lab) if ref_lab else 0.0,
+        }
+    return {"overall_accuracy": correct / n, "n": n, "per_class": per_class}
