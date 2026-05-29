@@ -20,6 +20,7 @@ def _check(x, y):
 def pearson_r(x, y):
     _check(x, y)
     ax, ay = np.asarray(x, float), np.asarray(y, float)
+    # numpy std defaults to population (ddof=0); the value cancels in the corrcoef ratio
     if ax.std() == 0 or ay.std() == 0:
         raise ZeroVariance("zero variance in x or y")
     return float(np.corrcoef(ax, ay)[0, 1])

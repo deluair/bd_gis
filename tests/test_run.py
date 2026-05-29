@@ -27,3 +27,39 @@ def test_unknown_indicator_raises(tmp_path):
     import pytest
     with pytest.raises(KeyError):
         validate_indicator("nope", {}, "2026-05-29T00:00:00Z", str(tmp_path))
+
+
+def test_non_continuous_comparison_raises(tmp_path, monkeypatch):
+    import pytest
+    from validation import registry
+    monkeypatch.setitem(
+        registry.INDICATORS, "fake_cat",
+        {"label": "x", "classification": "measured", "comparison": "categorical",
+         "spatial_unit": "grid", "reference": "hies_division_hcr",
+         "reference_source": "x", "reference_citation": "x"},
+    )
+    with pytest.raises(NotImplementedError):
+        validate_indicator("fake_cat", {"a": 1}, "2026-05-29T00:00:00Z", str(tmp_path))
+
+
+def test_partial_join_records_caveat(tmp_path):
+    ref = load_hies_division_hcr()
+    predicted = {k: v * 2 for k, v in ref.items()}
+    predicted["NotADivision"] = 99.0  # one unmatched key
+    card = validate_indicator(
+        "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
+    )
+    assert any("did not match" in c for c in card["caveats"])
+
+
+def test_main_cli_writes_card(tmp_path, monkeypatch, capsys):
+    import config
+    from validation import run as runmod
+    monkeypatch.setattr(config, "OUTPUT_DIR", str(tmp_path))
+    runmod.main([
+        "gis_poverty_index",
+        "--predicted-csv", "tests/fixtures/poverty_division_pred.csv",
+        "--unit-col", "division", "--value-col", "value", "--period", "2022",
+    ])
+    assert (tmp_path / "validation" / "gis_poverty_index.json").exists()
+    assert "gis_poverty_index" in capsys.readouterr().out

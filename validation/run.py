@@ -13,14 +13,25 @@ def validate_indicator(indicator_id, predicted, generated_at, outputs_dir,
     if indicator_id not in INDICATORS:
         raise KeyError(f"unknown indicator: {indicator_id}")
     cfg = INDICATORS[indicator_id]
+    if cfg["comparison"] != "continuous":
+        raise NotImplementedError(
+            f"validate_indicator only supports continuous comparison, "
+            f"got '{cfg['comparison']}' for {indicator_id}"
+        )
     ref = reference.LOADERS[cfg["reference"]]()
     pairs = [(predicted[k], ref[k]) for k in predicted if k in ref]
     caveats = list(extra_caveats or [])
+    matched, total = len(pairs), len(predicted)
+    if total and matched < total:
+        caveats.append(
+            f"{total - matched} of {total} predicted units did not match the "
+            f"reference join key"
+        )
     try:
         stats = calibrate.continuous_stats(pairs)
         tier = assign_tier(cfg["comparison"], stats["pearson_r"])
     except (calibrate.InsufficientData, calibrate.ZeroVariance) as e:
-        stats = {"n": len(pairs), "error": str(e)}
+        stats = {"n": matched, "error": str(e)}
         tier = "C"
         caveats.append(f"degenerate or insufficient data: {e}")
     card = cardmod.build_card(
@@ -29,7 +40,7 @@ def validate_indicator(indicator_id, predicted, generated_at, outputs_dir,
         reference_source=cfg["reference_source"],
         reference_citation=cfg["reference_citation"],
         spatial_unit=cfg["spatial_unit"], period=period,
-        comparison=cfg["comparison"], n=stats.get("n", len(pairs)),
+        comparison=cfg["comparison"], n=stats.get("n", matched),
         stats=stats, caveats=caveats, generated_at=generated_at,
     )
     cardmod.write_card(card, outputs_dir)
