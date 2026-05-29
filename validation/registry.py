@@ -21,6 +21,15 @@ def assign_tier(comparison, score):
 # indicator_id -> validation config. Only indicators whose reference loader is
 # implemented in reference.LOADERS may appear here (enforced by test_coverage).
 INDICATORS = {
+    "gis_sar_flood_monsoon_water_division": {
+        "label": "Sentinel-1 SAR monsoon water extent (division)",
+        "classification": "measured",
+        "comparison": "continuous",
+        "spatial_unit": "division",
+        "reference": "jrc_division_water",
+        "reference_source": "JRC Global Surface Water v1.4 Monthly History",
+        "reference_citation": "Pekel et al. 2016, doi:10.1038/nature20584",
+    },
     "gis_poverty_index": {
         "label": "Satellite poverty proxy",
         "classification": "proxy",

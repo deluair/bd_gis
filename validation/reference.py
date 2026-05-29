@@ -23,7 +23,12 @@ def load_csv_reference(path, unit_col, value_col):
     return out
 
 
-# loader name -> callable, looked up by registry.INDICATORS[...]["reference"]
+# loader name -> callable, looked up by registry.INDICATORS[...]["reference"].
+# Earth Engine loaders live in reference_ee (imported lazily-safe: import does not
+# init GEE, only calling the loader does).
+from validation import reference_ee  # noqa: E402
+
 LOADERS = {
     "hies_division_hcr": load_hies_division_hcr,
+    "jrc_division_water": reference_ee.load_jrc_division_water,
 }

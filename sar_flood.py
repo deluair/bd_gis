@@ -99,6 +99,23 @@ def build_sar_flood_time_series(start_year, end_year, region=None, step=1):
     return results
 
 
+def sar_division_water(year=2020, season="monsoon", scale=300):
+    """{division ADM1_NAME: SAR water area km2} for a year and season.
+
+    Keys are the same ADM1_NAME values used by the JRC reference loader, so the
+    validation join is exact.
+    """
+    from data_acquisition import get_admin_boundaries
+    admin = get_admin_boundaries()
+    names = admin.aggregate_array("ADM1_NAME").distinct().getInfo()
+    out = {}
+    for name in names:
+        geom = admin.filter(ee.Filter.eq("ADM1_NAME", name)).geometry()
+        mask = get_sar_water(year, season, geom)
+        out[name] = compute_sar_area_km2(mask, geom, scale).getInfo()
+    return out
+
+
 def compute_district_sar_stats(water_mask, districts_fc):
     """Per-district SAR water area and percent for a given mask."""
     scale = _scale_for_scope()
