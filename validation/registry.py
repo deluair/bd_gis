@@ -21,6 +21,18 @@ def assign_tier(comparison, score):
 # indicator_id -> validation config. Only indicators whose reference loader is
 # implemented in reference.LOADERS may appear here (enforced by test_coverage).
 INDICATORS = {
+    "gis_optical_flood_monsoon_water_division": {
+        "label": "Optical (Landsat) monsoon water extent (division)",
+        "classification": "measured",
+        "comparison": "continuous",
+        "spatial_unit": "division",
+        "reference": "jrc_division_water",
+        "reference_source": "JRC Global Surface Water v1.4 Monthly History",
+        "reference_citation": "Pekel et al. 2016, doi:10.1038/nature20584",
+        "static_caveats": [
+            "JRC is Landsat-derived, so this optical comparison shares sensor lineage; the high agreement is partly circular and is NOT a fully independent validation.",
+        ],
+    },
     "gis_sar_flood_monsoon_water_division": {
         "label": "Sentinel-1 SAR monsoon water extent (division)",
         "classification": "measured",
@@ -29,6 +41,9 @@ INDICATORS = {
         "reference": "jrc_division_water",
         "reference_source": "JRC Global Surface Water v1.4 Monthly History",
         "reference_citation": "Pekel et al. 2016, doi:10.1038/nature20584",
+        "static_caveats": [
+            "JRC is Landsat-derived; SAR is an independent sensor, so this is a genuine cross-sensor comparison. The negative bias reflects the conservative -17 dB threshold, not necessarily lower accuracy.",
+        ],
     },
     "gis_poverty_index": {
         "label": "Satellite poverty proxy",

@@ -164,6 +164,27 @@ def analyze_extreme_flood(year, region=None):
 # District-Level Statistics
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def flood_division_water(year=2020):
+    """{division ADM1_NAME: optical monsoon water area km2} for a year.
+
+    Mirrors sar_flood.sar_division_water so the two are directly comparable and
+    share the JRC reference join keys. Divisions whose optical composite fails
+    (heavy monsoon cloud) are dropped and surface as a join-overlap caveat.
+    """
+    from data_acquisition import get_admin_boundaries
+    admin = get_admin_boundaries()
+    names = admin.aggregate_array("ADM1_NAME").distinct().getInfo()
+    out = {}
+    for name in names:
+        geom = admin.filter(ee.Filter.eq("ADM1_NAME", name)).geometry()
+        try:
+            ext = get_annual_water_extents(year, geom)
+            out[name] = ext["monsoon_area_km2"].getInfo()
+        except Exception as e:
+            print(f"  optical flood {name} failed: {e}")
+    return out
+
+
 def compute_district_flood_stats(water_mask, districts_fc):
     """
     Compute water area per district for a given water mask.

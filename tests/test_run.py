@@ -63,3 +63,16 @@ def test_main_cli_writes_card(tmp_path, monkeypatch, capsys):
     ])
     assert (tmp_path / "validation" / "gis_poverty_index.json").exists()
     assert "gis_poverty_index" in capsys.readouterr().out
+
+
+def test_static_caveats_merged_into_card(tmp_path, monkeypatch):
+    from validation import registry
+    monkeypatch.setitem(
+        registry.INDICATORS["gis_poverty_index"], "static_caveats", ["known offset note"]
+    )
+    ref = load_hies_division_hcr()
+    predicted = {k: v * 2 for k, v in ref.items()}
+    card = validate_indicator(
+        "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
+    )
+    assert "known offset note" in card["caveats"]

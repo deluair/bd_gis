@@ -20,7 +20,7 @@ def validate_indicator(indicator_id, predicted, generated_at, outputs_dir,
         )
     ref = reference.LOADERS[cfg["reference"]]()
     pairs = [(predicted[k], ref[k]) for k in predicted if k in ref]
-    caveats = list(extra_caveats or [])
+    caveats = list(cfg.get("static_caveats", [])) + list(extra_caveats or [])
     matched, total = len(pairs), len(predicted)
     if total and matched < total:
         caveats.append(
