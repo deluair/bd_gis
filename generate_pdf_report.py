@@ -1,6 +1,10 @@
 """
 Generate a PDF findings report with embedded images using fpdf2.
 Covers the full national-scale Bangladesh Geospatial Analysis Pipeline.
+
+NOTE: standalone, not wired into the pipeline or app. The tables and captions here
+are STATIC PLACEHOLDERS, not read from pipeline outputs, so the numbers are not
+data-verified. Rebuild to read from outputs / the parquet lake before publishing.
 """
 import os
 from fpdf import FPDF

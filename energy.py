@@ -68,7 +68,8 @@ def compute_solar_potential_map(region, year=2023, scale=10000):
     except Exception:
         available = ee.Image.constant(1).clip(region)
 
-    # Bangladesh annual mean GHI: ~170-220 W/m2
+    # Bangladesh annual mean GHI is ~170-220 W/m2; the 250 ceiling adds headroom above
+    # that maximum so high-irradiance months do not saturate the score at 1.0.
     irradiance_scaled = irradiance.unitScale(0, 250).clamp(0, 1)
     solar_score = irradiance_scaled.multiply(consistency).multiply(
         available.unmask(0)
@@ -127,7 +128,8 @@ def compute_wind_potential(region, year=2023, scale=10000):
     wind = compute_wind_speed(year, region)
     # Wind power density proxy (normalized)
     wpd = wind.pow(3).rename("wind_power_density")
-    # Normalize to 0-1 for scoring
+    # wpd = wind_speed^3 (power-density proxy). Bangladesh 10m winds run ~2-8 m/s, so
+    # v^3 reaches roughly 500; the 500 ceiling scales that range to 0-1. Heuristic.
     score = wpd.unitScale(0, 500).clamp(0, 1).rename("wind_potential")
     return {"wind_speed": wind, "wind_potential": score}
 

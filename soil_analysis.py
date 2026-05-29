@@ -111,10 +111,15 @@ def compute_erosion_risk(region, climate_year=2023, scale=250):
         c_factor = ee.Image.constant(1).subtract(
             ndvi.clamp(0, 0.8).divide(0.8)
         ).rename("c_factor")
-    except Exception:
+    except Exception as e:
+        # NDVI unavailable: explicit mid-range cover-factor assumption (0.5), flagged
+        # here rather than silently substituted. Not a measured value.
+        print(f"  WARNING: NDVI unavailable for erosion C-factor ({e}); using midpoint 0.5")
         c_factor = ee.Image.constant(0.5).rename("c_factor").clip(region)
 
-    # Combined erosion susceptibility index (weighted, NOT RUSLE soil loss)
+    # Combined erosion susceptibility index (weighted, NOT RUSLE soil loss).
+    # Weights (R 0.30, K 0.20, LS 0.25, C 0.25) are heuristic, not RUSLE-calibrated;
+    # output is a relative 0-1 susceptibility index, not a quantitative soil-loss rate.
     erosion_risk = (
         r_factor.multiply(0.3)
         .add(k_factor.multiply(0.2))

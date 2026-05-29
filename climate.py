@@ -329,10 +329,19 @@ def compute_drought_severity(year, region, scale=None, ref_start=1985, ref_end=2
                 .clip(region)
                 .rename("lst_celsius")
             )
-            temp_anomaly = lst.subtract(lt_lst).divide(5).multiply(-1).rename("temp_norm")
+            temp_anomaly = (
+                lst.subtract(lt_lst)
+                .divide(cfg.DROUGHT_TEMP_ANOMALY_SCALE_C)
+                .multiply(-1)
+                .rename("temp_norm")
+            )
 
         drought = precip_norm.add(temp_anomaly).divide(2).rename("drought_index")
-    except Exception:
+    except Exception as e:
+        # MODIS LST unavailable: fall back to a rainfall-only drought index. This is
+        # a valid but weaker signal (no temperature component), so flag it rather
+        # than silently returning it as if it were the full composite.
+        print(f"  WARNING: LST unavailable for drought ({e}); drought_index is rainfall-only")
         drought = precip_norm.rename("drought_index")
 
     return drought

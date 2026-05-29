@@ -265,6 +265,11 @@ DEFAULT_AWEI_THRESHOLD = 0.0   # AWEI >= 0 (Feyisa et al. 2014): context-depende
 # Thresholding strategy: national scope uses fixed (Otsu timeouts on 148k km2)
 DEFAULT_THRESHOLD_METHOD = "fixed" if SCOPE == "national" else "otsu"
 
+# Drought index: the MODIS LST anomaly is normalized by this many degrees C (a
+# typical inter-annual LST anomaly magnitude over Bangladesh) before being combined
+# with the rainfall anomaly. Heuristic scale for a relative index, not calibrated.
+DROUGHT_TEMP_ANOMALY_SCALE_C = 5.0
+
 # Water occurrence categories
 PERMANENT_WATER_MIN = 0.75
 SEASONAL_WATER_MIN = 0.25

@@ -173,9 +173,16 @@ def compute_slum_index(year, region, scale=100):
     weights = []
     included_indicators = []
 
+    # Weights below are heuristic (expert judgment, sum to 1.0 when all 5 indicators
+    # are present), not literature-calibrated. A failed indicator is excluded and the
+    # survivors are renormalized by total_weight, which changes the effective index;
+    # the included set is printed and stored as the "indicators_included" property.
+
     # 1. Building density (normalized to 0-1)
     try:
         density = compute_building_density(year, region)
+        # 5000 = GHSL built_surface ceiling (m2 per 100m pixel, ~50% built density);
+        # neighborhood means above it saturate to 1. Heuristic, BD-urban scaled.
         density_norm = density.unitScale(0, 5000).clamp(0, 1).rename("density_norm")
         indicators.append(density_norm)
         included_indicators.append("building_density")

@@ -84,8 +84,8 @@ def compute_poverty_index(year, region, scale=1000):
         built = get_built_fraction(year, region)
         built_deprivation = ee.Image.constant(1).subtract(built).rename("built_dep")
     except Exception as e:
-        print(f"  WARNING: built_fraction failed ({e}), using fallback constant")
-        built_deprivation = ee.Image.constant(0.5).rename("built_dep").clip(region)
+        print(f"  WARNING: built_fraction failed ({e}); dropping it from the composite")
+        built_deprivation = None
 
     # 3. Population-weighted light deficit
     try:
@@ -98,8 +98,8 @@ def compute_poverty_index(year, region, scale=1000):
         # in the composite despite nominal equal weighting.
         pop_light_gap = pop_norm.multiply(light_deprivation).rename("pop_light_gap")
     except Exception as e:
-        print(f"  WARNING: population_density failed ({e}), using fallback constant")
-        pop_light_gap = ee.Image.constant(0.5).rename("pop_light_gap").clip(region)
+        print(f"  WARNING: population_density failed ({e}); dropping it from the composite")
+        pop_light_gap = None
 
     # 4. Vegetation stress (low NDVI in crop areas = food insecurity proxy)
     try:
@@ -107,18 +107,23 @@ def compute_poverty_index(year, region, scale=1000):
         ndvi_norm = ndvi.unitScale(0, 0.9).clamp(0, 1)
         veg_stress = ee.Image.constant(1).subtract(ndvi_norm).rename("veg_stress")
     except Exception as e:
-        print(f"  WARNING: vegetation_greenness failed ({e}), using fallback constant")
-        veg_stress = ee.Image.constant(0.5).rename("veg_stress").clip(region)
+        print(f"  WARNING: vegetation_greenness failed ({e}); dropping it from the composite")
+        veg_stress = None
 
-    # Combine with equal weights
-    poverty_index = (
-        light_deprivation
-        .add(built_deprivation)
-        .add(pop_light_gap)
-        .add(veg_stress)
-        .divide(4)
-        .rename("poverty_index")
-    )
+    # Combine the indicators that actually computed, with equal weights. A dropped
+    # indicator (None) is excluded rather than replaced by a fabricated 0.5 constant
+    # (which the prior code did, silently injecting fake deprivation). The index is
+    # the mean of the indicators truly available for this year and region.
+    components = [
+        img for img in (light_deprivation, built_deprivation, pop_light_gap, veg_stress)
+        if img is not None
+    ]
+    if len(components) < 4:
+        print(f"  poverty_index built from {len(components)}/4 indicators (failed ones dropped)")
+    acc = components[0]
+    for img in components[1:]:
+        acc = acc.add(img)
+    poverty_index = acc.divide(len(components)).rename("poverty_index")
 
     return poverty_index
 
@@ -237,7 +242,5 @@ def run_poverty_analysis(region):
             results["poverty_timeseries"][year] = stats
         except Exception as e:
             print(f"    Poverty {year} skipped: {e}")
-
-    results["uncertainty_pct"] = 25
 
     return results

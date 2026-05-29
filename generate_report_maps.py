@@ -1,6 +1,9 @@
 """
 Generate static map images for the findings report by downloading
 actual GEE thumbnail tiles and composing them with matplotlib.
+
+NOTE: standalone, not imported by the pipeline or app. Figure titles and captions
+must not embed hardcoded area figures; derive them from pipeline outputs.
 """
 import os
 import sys
@@ -214,7 +217,7 @@ def map_extreme_floods():
         mpatches.Patch(color="white", edgecolor="gray", label="Not flooded"),
     ]
     fig.legend(handles=legend_patches, loc="lower center", ncol=2, fontsize=10)
-    plt.suptitle("Extreme Flood Comparison: 1988 (6,823 km²) vs 2004 (4,531 km²)",
+    plt.suptitle("Extreme Flood Comparison: 1988 vs 2004",
                  fontsize=14, y=1.02)
     plt.tight_layout()
     return save_fig(fig, "05_extreme_floods_1988_2004.png")
