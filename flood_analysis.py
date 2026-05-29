@@ -62,14 +62,20 @@ def get_annual_water_extents(year, region=None, sensor="landsat"):
     monsoon_area = compute_water_area(monsoon_water, region, scale=scale)
     seasonal_area = compute_water_area(seasonal_flood, region, scale=scale)
 
-    # Sanity check: monsoon extent must be >= dry extent. If not, flag it.
-    # This can happen when composites are mislabeled or have poor data coverage.
-    sanity_clamped = False
-    if monsoon_area.getInfo() < dry_area.getInfo():
-        sanity_clamped = True
-        print(f"  WARNING: monsoon < dry for {year}, clamping")
-        monsoon_area = dry_area
-    seasonal_area = monsoon_area.subtract(dry_area)
+    # Sanity FLAG: monsoon extent should exceed dry (permanent) extent. When it does
+    # not (mislabeled composites or poor data coverage), flag the year as low
+    # confidence but do NOT rewrite the areas. seasonal_area stays the image-derived
+    # value computed above, so the returned stat stays consistent with the returned
+    # seasonal_flood mask. The prior code overwrote it with a scalar subtraction and
+    # silently zeroed clamped years (stat disagreed with the mask).
+    dry_val = dry_area.getInfo()
+    monsoon_val = monsoon_area.getInfo()
+    sanity_clamped = monsoon_val < dry_val
+    if sanity_clamped:
+        print(
+            f"  WARNING: monsoon ({monsoon_val:.0f}) < dry ({dry_val:.0f}) km2 for "
+            f"{year}; flagged low-confidence, not clamped"
+        )
 
     return {
         "year": year,
