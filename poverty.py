@@ -55,6 +55,45 @@ def get_cropland_fraction(region, year=2021):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Normalization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Percentile bounds for the robust stretch. 2/98 trims sensor outliers (gas
+# flares, saturated urban cores) without discarding the real upper tail.
+NORM_LOW_PCT = 2
+NORM_HIGH_PCT = 98
+
+
+def robust_unit_scale(img, region, scale, log_transform=False):
+    """Stretch an image to 0-1 against its own distribution over `region`.
+
+    Fixed physical ranges (VIIRS 0-200, WorldPop 0-25000) put essentially all
+    of Bangladesh in the bottom 2% of the scale, which collapses a component to
+    a near-constant and removes it from the composite. Stretching against the
+    observed 2nd-98th percentile keeps each component on a comparable footing.
+
+    log_transform=True first applies log1p, for quantities whose distribution is
+    close to log-normal (radiance, population density). Without it the stretch
+    is set by Dhaka's extreme tail and everywhere else collapses again.
+    """
+    # ee.Image has no log1p. max(0) first because VIIRS radiance can be slightly
+    # negative over dark water, which would make the log undefined.
+    work = img.max(0).add(1).log() if log_transform else img
+    band = ee.String(work.bandNames().get(0))
+    pct = work.reduceRegion(
+        reducer=ee.Reducer.percentile([NORM_LOW_PCT, NORM_HIGH_PCT]),
+        geometry=region, scale=scale,
+        maxPixels=cfg.MAX_PIXELS, bestEffort=True,
+    )
+    lo = ee.Number(pct.get(band.cat(f"_p{NORM_LOW_PCT}")))
+    hi = ee.Number(pct.get(band.cat(f"_p{NORM_HIGH_PCT}")))
+    # A degenerate spread would divide by zero and poison the whole composite.
+    span = hi.subtract(lo)
+    safe_span = ee.Number(ee.Algorithms.If(span.gt(0), span, 1))
+    return work.subtract(lo).divide(safe_span).clamp(0, 1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Composite Poverty Index
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -68,21 +107,32 @@ def compute_poverty_index(year, region, scale=1000):
     - High population with low lights → high deprivation
     - Low vegetation health in agricultural areas → high deprivation
 
-    Each indicator is normalized to 0–1 and combined with equal weights.
-    The result is a relative index, NOT an absolute poverty measure.
+    Each indicator is stretched to 0-1 against its own observed distribution
+    across `region` (see robust_unit_scale) and combined with equal weights.
+    Region-relative normalization is what makes the components comparable: on
+    fixed physical ranges, light and built-up deprivation both pin at ~0.997
+    and the population gap at ~0.0004, so the composite degenerates to a
+    constant near 0.5 plus a quarter of the vegetation term.
+
+    The result is a relative index, NOT an absolute poverty measure. It ranks
+    areas within `region`; values are not comparable across different regions
+    or across years, because the stretch bounds are recomputed each time.
     """
-    # 1. Nighttime lights (inverted: dark = deprived)
+    # 1. Nighttime lights (inverted: dark = deprived). Radiance is close to
+    #    log-normal, so stretch in log space.
     lights = get_light_intensity(year, region)
     band_name = lights.bandNames().getInfo()[0]
-    from nightlights import _sensor_scale_range
-    lo, hi = _sensor_scale_range(year)
-    light_norm = lights.select(band_name).unitScale(lo, hi).clamp(0, 1)
+    light_norm = robust_unit_scale(
+        lights.select(band_name), region, scale, log_transform=True
+    )
     light_deprivation = ee.Image.constant(1).subtract(light_norm).rename("light_dep")
 
-    # 2. Built-up fraction (inverted: no buildings = deprived)
+    # 2. Built-up fraction (inverted: no buildings = deprived). Also heavily
+    #    right-skewed, most rural pixels sit near zero.
     try:
         built = get_built_fraction(year, region)
-        built_deprivation = ee.Image.constant(1).subtract(built).rename("built_dep")
+        built_norm = robust_unit_scale(built, region, scale, log_transform=True)
+        built_deprivation = ee.Image.constant(1).subtract(built_norm).rename("built_dep")
     except Exception as e:
         print(f"  WARNING: built_fraction failed ({e}); dropping it from the composite")
         built_deprivation = None
@@ -90,21 +140,19 @@ def compute_poverty_index(year, region, scale=1000):
     # 3. Population-weighted light deficit
     try:
         pop = get_population_density(year, region)
-        # WorldPop units: people per 100m pixel. Dhaka can exceed 20k.
-        pop_norm = pop.unitScale(0, 25000).clamp(0, 1)
-        # High population + low light = poverty hotspot
-        # NOTE: pop_light_gap is the product of two [0,1] values, so its effective
-        # variance is lower than other indicators. This gives it less influence
-        # in the composite despite nominal equal weighting.
+        pop_norm = robust_unit_scale(pop, region, scale, log_transform=True)
+        # High population + low light = poverty hotspot. Both terms now carry
+        # real variance, so the product is no longer pinned at zero.
         pop_light_gap = pop_norm.multiply(light_deprivation).rename("pop_light_gap")
     except Exception as e:
         print(f"  WARNING: population_density failed ({e}); dropping it from the composite")
         pop_light_gap = None
 
-    # 4. Vegetation stress (low NDVI in crop areas = food insecurity proxy)
+    # 4. Vegetation stress (low NDVI in crop areas = food insecurity proxy).
+    #    Roughly symmetric, so no log transform.
     try:
         ndvi = get_vegetation_greenness(year, region)
-        ndvi_norm = ndvi.unitScale(0, 0.9).clamp(0, 1)
+        ndvi_norm = robust_unit_scale(ndvi, region, scale)
         veg_stress = ee.Image.constant(1).subtract(ndvi_norm).rename("veg_stress")
     except Exception as e:
         print(f"  WARNING: vegetation_greenness failed ({e}); dropping it from the composite")
@@ -143,10 +191,41 @@ def classify_poverty_levels(poverty_index):
     return classified.toInt()
 
 
+def _population_weighted_mean(index_img, pop_img, feature, scale):
+    """Population-weighted mean of `index_img` over one feature.
+
+    A plain spatial mean weights every pixel equally, so Sundarbans mangrove and
+    empty char land count as much as Dhaka. Survey poverty rates are shares of
+    *people*, so the satellite aggregate has to be weighted by population to be
+    comparable. Water and forest carry ~0 population and drop out naturally.
+    """
+    stack = index_img.multiply(pop_img).rename("weighted").addBands(
+        pop_img.rename("pop_total")
+    )
+    sums = stack.reduceRegion(
+        reducer=ee.Reducer.sum(), geometry=feature.geometry(), scale=scale,
+        maxPixels=cfg.MAX_PIXELS, bestEffort=True,
+    )
+    # NOTE: this is the sum of WorldPop values *sampled at `scale`*, not a
+    # population count. WorldPop is people per 100 m pixel, so sampling at 1 km
+    # undercounts by roughly 100x. The factor cancels in the weighted mean, but
+    # never report this number as a population.
+    weight_sum = ee.Number(sums.get("pop_total"))
+    weighted = ee.Algorithms.If(
+        weight_sum.gt(0), ee.Number(sums.get("weighted")).divide(weight_sum), None
+    )
+    return weighted, weight_sum
+
+
 def compute_poverty_stats_by_division(year, region, scale=1000):
-    """Compute poverty index statistics per administrative division."""
+    """Compute poverty index statistics per administrative division.
+
+    Reports both the population-weighted mean (comparable to survey headcount
+    rates) and the unweighted spatial mean (comparable to earlier runs).
+    """
     from data_acquisition import get_division_boundaries_all
     poverty = compute_poverty_index(year, region, scale)
+    pop = get_population_density(year, region)
     divisions = get_division_boundaries_all()
 
     def _compute_div_stats(feature):
@@ -159,7 +238,11 @@ def compute_poverty_stats_by_division(year, region, scale=1000):
             maxPixels=cfg.MAX_PIXELS,
             bestEffort=True,
         )
-        return feature.set(stats).set("year", year)
+        weighted, weight_sum = _population_weighted_mean(poverty, pop, feature, scale)
+        return (feature.set(stats)
+                .set("poverty_index_popwt", weighted)
+                .set("population_weight_sum", weight_sum)
+                .set("year", year))
 
     return divisions.map(_compute_div_stats)
 
@@ -176,9 +259,10 @@ def compute_poverty_change(year1, year2, region, scale=1000):
 
 
 def compute_district_poverty_ranking(year, region, scale=1000):
-    """Rank districts by mean poverty index."""
+    """Rank districts by mean poverty index (spatial and population-weighted)."""
     from data_acquisition import get_admin_boundaries
     poverty = compute_poverty_index(year, region, scale)
+    pop = get_population_density(year, region)
     districts = get_admin_boundaries()
 
     def _compute_stats(feature):
@@ -189,7 +273,11 @@ def compute_district_poverty_ranking(year, region, scale=1000):
             maxPixels=cfg.MAX_PIXELS,
             bestEffort=True,
         )
-        return feature.set(stats).set("year", year)
+        weighted, weight_sum = _population_weighted_mean(poverty, pop, feature, scale)
+        return (feature.set(stats)
+                .set("poverty_index_popwt", weighted)
+                .set("population_weight_sum", weight_sum)
+                .set("year", year))
 
     return districts.map(_compute_stats)
 
