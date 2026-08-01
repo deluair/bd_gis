@@ -1,5 +1,5 @@
-from validation.run import validate_indicator
 from validation.reference import load_hies_division_hcr
+from validation.run import validate_indicator
 
 
 def test_perfect_correlation_is_tier_a(tmp_path):
@@ -15,7 +15,7 @@ def test_perfect_correlation_is_tier_a(tmp_path):
 
 def test_zero_variance_falls_back_to_tier_c(tmp_path):
     ref = load_hies_division_hcr()
-    predicted = {k: 5.0 for k in ref}  # constant -> zero variance
+    predicted = dict.fromkeys(ref, 5.0)  # constant -> zero variance
     card = validate_indicator(
         "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
     )
@@ -31,6 +31,7 @@ def test_unknown_indicator_raises(tmp_path):
 
 def test_non_continuous_comparison_raises(tmp_path, monkeypatch):
     import pytest
+
     from validation import registry
     monkeypatch.setitem(
         registry.INDICATORS, "fake_cat",

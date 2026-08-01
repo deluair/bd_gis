@@ -9,8 +9,8 @@ Key indicators:
 """
 import csv
 import os
-import zipfile
 import tempfile
+import zipfile
 from collections import defaultdict
 
 DHS_DIR = os.path.expanduser(
@@ -99,7 +99,7 @@ def process_kids_recode(zip_name, label):
     print(f"\n=== {label}: Kids Recode ({zip_name}) ===")
     dat_path, col_map, tmpdir = extract_from_zip(zip_name)
     if not dat_path:
-        print(f"  Not found or no DAT/DCT")
+        print("  Not found or no DAT/DCT")
         return None
 
     # Check available fields
@@ -118,7 +118,7 @@ def process_kids_recode(zip_name, label):
         "bcg": 0, "measles": 0, "vacc_total": 0,
     })
 
-    with open(dat_path, "r", encoding="latin-1") as f:
+    with open(dat_path, encoding="latin-1") as f:
         for line in f:
             div = read_int(line, col_map, "v024")
             wt = read_int(line, col_map, "v005", 1000000) / 1000000.0
@@ -215,7 +215,7 @@ def process_women_recode(zip_name, label):
     print(f"\n=== {label}: Women's Recode ({zip_name}) ===")
     dat_path, col_map, tmpdir = extract_from_zip(zip_name)
     if not dat_path:
-        print(f"  Not found or no DAT/DCT")
+        print("  Not found or no DAT/DCT")
         return None
 
     print(f"  Available: {len(col_map)} columns")
@@ -228,7 +228,7 @@ def process_women_recode(zip_name, label):
         "total_children": 0,
     })
 
-    with open(dat_path, "r", encoding="latin-1") as f:
+    with open(dat_path, encoding="latin-1") as f:
         for line in f:
             div = read_int(line, col_map, "v024")
             wt = read_int(line, col_map, "v005", 1000000) / 1000000.0

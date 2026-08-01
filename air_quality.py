@@ -2,10 +2,11 @@
 Air quality analysis -- Sentinel-5P TROPOMI pollutant mapping for NO2, SO2,
 CO, aerosol index, and formaldehyde over Bangladesh (2018-present).
 """
-import ee
 from datetime import datetime
-import config as cfg
 
+import ee
+
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data Loading
@@ -44,7 +45,7 @@ def get_pollutant(pollutant, start_date, end_date, region):
     # S5P OFFL products reliable from mid-2018 onward
     start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
     if start_dt.year < 2018 or (start_dt.year == 2018 and start_dt.month < 5):
-        print(f"  WARNING: S5P data before May 2018 is incomplete, clamping start date")
+        print("  WARNING: S5P data before May 2018 is incomplete, clamping start date")
         start_date = "2018-05-01"
 
     if pollutant == "AEROSOL":

@@ -3,10 +3,9 @@ Flood extent mapping – monsoon vs dry season classification,
 seasonal inundation, extreme flood analysis, and district-level statistics.
 """
 import ee
+
 import config as cfg
-from data_acquisition import (
-    get_study_area, get_seasonal_composite, get_admin_boundaries
-)
+from data_acquisition import get_admin_boundaries, get_seasonal_composite, get_study_area
 from water_classification import classify_water, compute_water_area
 
 

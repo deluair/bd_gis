@@ -12,7 +12,6 @@ import config as cfg
 from data_acquisition import get_landsat_collection, get_sentinel2_collection, make_composite
 from water_classification import classify_water
 
-
 # ── Damage severity thresholds (NDVI drop) ───────────────────────────────────
 NDVI_SEVERE   = 0.20   # NDVI drop >= 0.20  => severe damage
 NDVI_MODERATE = 0.10   # NDVI drop >= 0.10  => moderate damage
@@ -250,7 +249,7 @@ def compare_all_cyclones(region=None, scale=100):
         try:
             damage = compute_damage_area(name, region=region, scale=scale)
             results.append(damage)
-            print(f"    Done.")
+            print("    Done.")
         except Exception as e:
             print(f"    {name} skipped: {e}")
             results.append({

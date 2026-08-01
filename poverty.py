@@ -4,8 +4,8 @@ nighttime lights, population density, vegetation, built-up area, and
 accessibility as proxy indicators.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Individual Indicators

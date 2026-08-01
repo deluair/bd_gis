@@ -11,7 +11,9 @@ from pathlib import Path
 
 import ee
 
-ee.Initialize(project="gen-lang-client-0432004086")
+import config as cfg
+
+ee.Initialize(project=cfg.GEE_PROJECT)
 
 OUT = Path(__file__).resolve().parent.parent / "app" / "web" / "static" / "satellite"
 OUT.mkdir(parents=True, exist_ok=True)

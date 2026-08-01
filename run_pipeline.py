@@ -30,8 +30,8 @@ Usage:
     python run_pipeline.py --transport                  # Transportation & connectivity gaps
     python run_pipeline.py --alerts                     # Year-over-year change detection alerts
     python run_pipeline.py --alerts --alerts-year 2022  # Alerts for a specific year
-    python run_pipeline.py --full-extended              # ALL modules (water + extended)
-    python run_pipeline.py --local                     # Local analysis on downloaded data (no GEE)
+    python run_pipeline.py --full-extended              # 23-module pipeline (water + extended)
+    python run_pipeline.py --local                      # Local analysis on downloaded data (no GEE)
 """
 import argparse
 import os
@@ -47,7 +47,8 @@ import config as cfg
 
 def _getinfo_with_timeout(ee_obj, timeout=300):
     """Thread-safe getInfo() with timeout using concurrent.futures."""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(ee_obj.getInfo)
         try:
@@ -87,7 +88,7 @@ def _batch_resolve_ee(data, timeout=600):
 
     batch = _getinfo_with_timeout(ee.Dictionary(ee_vals), timeout)
     if batch is None:
-        batch = {k: None for k in ee_keys}
+        batch = dict.fromkeys(ee_keys)
 
     result = dict(plain)
     result.update(batch)
@@ -115,7 +116,7 @@ def _batch_resolve_list(entries, ee_fields, timeout=600):
 
     resolved = _getinfo_with_timeout(ee.Dictionary(ee_batch), timeout)
     if resolved is None:
-        resolved = {k: None for k in ee_batch}
+        resolved = dict.fromkeys(ee_batch)
 
     result = []
     for i, entry in enumerate(entries):
@@ -131,24 +132,27 @@ def _batch_resolve_list(entries, ee_fields, timeout=600):
     return result
 
 
-from data_acquisition import (
-    init_gee, get_study_area, get_seasonal_composite,
-    get_srtm_dem, get_jrc_water
-)
-from water_classification import classify_water, compute_water_area
+from data_acquisition import get_jrc_water, get_seasonal_composite, get_srtm_dem, get_study_area, init_gee
 from export_utils import (
-    ensure_output_dir, export_geotiff, export_csv,
-    export_to_drive, export_shapefile, export_fc_to_csv
+    ensure_output_dir,
+    export_csv,
+    export_fc_to_csv,
+    export_to_drive,
 )
 from visualization import (
-    create_base_map, add_water_layer, add_occurrence_layer,
-    add_persistence_layer, add_change_layer,
-    create_water_comparison_map, create_temporal_map,
-    create_river_migration_map, create_haor_map,
-    save_map, plot_flood_time_series, plot_haor_area_trends,
-    plot_erosion_rates, plot_period_comparison, create_change_figure,
+    add_occurrence_layer,
+    add_persistence_layer,
+    create_base_map,
+    create_haor_map,
+    create_river_migration_map,
+    create_water_comparison_map,
+    plot_erosion_rates,
+    plot_flood_time_series,
+    plot_haor_area_trends,
+    plot_period_comparison,
+    save_map,
 )
-
+from water_classification import classify_water, compute_water_area
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Original Water Analysis Modules
@@ -248,7 +252,8 @@ def run_rivers():
     init_gee()
     ensure_output_dir("rivers")
 
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
 
     for river_name in cfg.RIVERS:
         print(f"\n── {river_name} River ──")
@@ -350,8 +355,9 @@ def run_sar():
 def run_floods():
     """Flood extent mapping and time series analysis."""
     from flood_analysis import (
-        build_flood_time_series, analyze_extreme_flood,
-        compute_flood_frequency, detect_flood_trend,
+        analyze_extreme_flood,
+        compute_flood_frequency,
+        detect_flood_trend,
         get_annual_water_extents,
     )
 
@@ -386,7 +392,7 @@ def run_floods():
                 })
                 print(f"    Dry: {dry_val:.1f} km², Monsoon: {monsoon_val:.1f} km²")
             else:
-                print(f"    Skipped: could not resolve area values")
+                print("    Skipped: could not resolve area values")
         except Exception as e:
             print(f"    Skipped: {e}")
 
@@ -433,10 +439,14 @@ def run_floods():
 def run_changes():
     """Water body gain/loss and change detection."""
     from water_change import (
-        compute_water_occurrence, classify_water_persistence,
-        compute_all_decade_changes, detect_water_to_land,
-        detect_land_to_water, get_jrc_occurrence,
-        validate_against_jrc, compute_area_stats,
+        classify_water_persistence,
+        compute_all_decade_changes,
+        compute_area_stats,
+        compute_water_occurrence,
+        detect_land_to_water,
+        detect_water_to_land,
+        get_jrc_occurrence,
+        validate_against_jrc,
     )
 
     print("\n" + "=" * 60)
@@ -449,7 +459,7 @@ def run_changes():
 
     # For national scope, use tiled processing
     if cfg.SCOPE == "national":
-        from tiling import run_tiled, merge_image_tiles
+        from tiling import merge_image_tiles, run_tiled
         print("\nComputing water occurrence (tiled by division)...")
         occurrence = run_tiled(
             compute_water_occurrence,
@@ -532,8 +542,8 @@ def run_changes():
 def run_haors():
     """Haor/wetland-specific analysis."""
     from haor_analysis import (
-        delineate_all_haors, compute_all_haor_timeseries,
         compare_all_haors,
+        delineate_all_haors,
     )
 
     wetland_label = "Wetland" if cfg.SCOPE == "national" else "Haor"
@@ -2479,7 +2489,8 @@ def main():
     parser.add_argument("--alerts", action="store_true", help="Year-over-year change detection alerts")
     parser.add_argument("--alerts-year", type=int, default=None, metavar="YEAR",
                         help="Year for alerts (default: 2023)")
-    parser.add_argument("--full-extended", action="store_true", help="ALL modules")
+    parser.add_argument("--full-extended", action="store_true",
+                        help="23-module pipeline (excludes cyclones, aquaculture, chars, timelapse, alerts)")
     parser.add_argument("--local", action="store_true",
                         help="Run local analysis on downloaded satellite data (no GEE)")
 

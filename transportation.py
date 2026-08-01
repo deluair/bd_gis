@@ -10,8 +10,8 @@ Datasets:
 - FAO GAUL admin boundaries (divisions for per-division scoring)
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Settlement Classification

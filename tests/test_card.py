@@ -1,5 +1,6 @@
 import pytest
-from validation.card import build_card, write_card, read_card
+
+from validation.card import build_card, read_card, write_card
 
 
 def _sample():

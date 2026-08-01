@@ -3,19 +3,21 @@ Generate publication-quality GIS maps for each research brief domain.
 Uses Google Earth Engine to fetch real satellite imagery and overlay analysis results.
 Output: PNG files in outputs/publication_maps/
 """
+import io
 import os
 import sys
-import io
 import urllib.request
-import numpy as np
-import matplotlib.pyplot as plt
+
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(__file__))
+import ee
+
 import config as cfg
 
-import ee
 ee.Initialize(project=cfg.GEE_PROJECT)
 
 from data_acquisition import get_study_area
@@ -34,7 +36,7 @@ def fetch_thumb(ee_image, vis_params, region=None, dims=DIMS):
         region = REGION
     params = {**vis_params, "region": region, "dimensions": dims, "format": "png"}
     url = ee_image.getThumbURL(params)
-    print(f"  Fetching thumbnail...")
+    print("  Fetching thumbnail...")
     with urllib.request.urlopen(url, timeout=180) as resp:
         data = resp.read()
     return np.array(Image.open(io.BytesIO(data)))

@@ -1,5 +1,6 @@
 import pytest
-from validation.registry import assign_tier, TIER_THRESHOLDS, INDICATORS
+
+from validation.registry import INDICATORS, TIER_THRESHOLDS, assign_tier
 
 
 def test_continuous_tiers_at_boundaries():

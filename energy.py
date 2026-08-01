@@ -4,8 +4,8 @@ estimation, biomass availability, and energy access indicators
 for Bangladesh using satellite-derived datasets.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Solar Energy Potential
@@ -176,7 +176,7 @@ def compute_energy_access(year, region, scale=1000):
     Energy access indicator combining electrification status + light intensity.
     Uses nighttime lights as proxy for electricity availability and quality.
     """
-    from nightlights import get_nightlights, classify_electrification
+    from nightlights import classify_electrification, get_nightlights
 
     try:
         elec = classify_electrification(year, region)

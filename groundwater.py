@@ -6,8 +6,8 @@ Decomposition: TWS = groundwater + soil moisture + surface water + snow/ice
 For Bangladesh (no snow): GWS anomaly = TWS - soil moisture - surface water
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GRACE Total Water Storage

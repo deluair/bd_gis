@@ -3,8 +3,8 @@ Char (river island) detection and land accretion analysis for Bangladesh river d
 Tracks new land formation through water-to-land pixel transitions in the Meghna estuary,
 Padma-Jamuna confluence, and coastal Noakhali/Bhola.
 """
-import signal
 import ee
+
 import config as cfg
 
 GEE_TIMEOUT = 300
@@ -16,22 +16,20 @@ class GEETimeoutError(Exception):
 
 def _getinfo_with_timeout(ee_obj, timeout=GEE_TIMEOUT):
     """Thread-safe getInfo() with timeout using concurrent.futures."""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(ee_obj.getInfo)
         try:
             return future.result(timeout=timeout)
-        except FuturesTimeout:
-            raise GEETimeoutError("GEE call timed out")
+        except FuturesTimeout as exc:
+            raise GEETimeoutError("GEE call timed out") from exc
         except Exception:
             raise
 
 
-from data_acquisition import (
-    get_landsat_collection, make_composite
-)
+from data_acquisition import get_landsat_collection, make_composite
 from water_classification import classify_water
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Accretion Zone ROIs

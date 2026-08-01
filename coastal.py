@@ -4,8 +4,8 @@ low-elevation coastal zone (LECZ) mapping, cyclone exposure assessment,
 and salinity intrusion vulnerability for Bangladesh's coastal belt.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Coastal Zone Configuration
@@ -29,7 +29,7 @@ COASTAL_BOUNDS = {
 def map_lecz(region, threshold_m=5):
     """
     Map Low-Elevation Coastal Zone: areas below a given elevation threshold.
-    Default 5m — extremely vulnerable to sea level rise and storm surge.
+    Default 5m, extremely vulnerable to sea level rise and storm surge.
     """
     dem = ee.Image(cfg.SRTM_DEM).select("elevation")
     lecz = dem.lt(threshold_m).And(dem.gte(0)).rename("lecz")

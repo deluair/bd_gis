@@ -1,9 +1,8 @@
 """Join an indicator's per-unit output to its reference, score it, write a card."""
 import argparse
 
-from validation import calibrate
+from validation import calibrate, reference
 from validation import card as cardmod
-from validation import reference
 from validation.registry import INDICATORS, assign_tier
 
 
@@ -49,6 +48,7 @@ def validate_indicator(indicator_id, predicted, generated_at, outputs_dir,
 
 def main(argv=None):
     import datetime
+
     import config as cfg
     p = argparse.ArgumentParser(description="Generate a validation card for an indicator")
     p.add_argument("indicator_id")

@@ -1,4 +1,4 @@
-from validation.reference import load_hies_division_hcr, load_csv_reference, LOADERS
+from validation.reference import LOADERS, load_csv_reference, load_hies_division_hcr
 
 
 def test_hies_division_hcr_returns_eight_divisions():

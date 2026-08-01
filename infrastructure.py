@@ -4,8 +4,8 @@ road density estimation, economic zone growth, and construction activity
 tracking using GHSL, Dynamic World, and spectral indices.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Construction Change Detection
@@ -146,8 +146,8 @@ def compute_connectivity_index(region, year=2020, scale=1000):
     distance to nearest built-up area and nighttime lights.
     High value = well connected, low = remote.
     """
-    from urbanization import get_ghsl_built
     from nightlights import get_nightlights
+    from urbanization import get_ghsl_built
 
     built = get_ghsl_built(year, region)
     urban_mask = built.gt(100)  # >100m2 built-up

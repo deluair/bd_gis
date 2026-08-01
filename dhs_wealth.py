@@ -111,7 +111,7 @@ def extract_wealth_from_dat(dat_path, col_map):
         print("  Missing required columns in DCT")
         return results
 
-    with open(dat_path, "r", encoding="latin-1") as f:
+    with open(dat_path, encoding="latin-1") as f:
         for line in f:
             try:
                 weight = int(line[hv005["start"]:hv005["start"] + hv005["width"]].strip() or "0")

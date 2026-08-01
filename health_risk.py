@@ -11,8 +11,8 @@ Key health risks in Bangladesh:
 - Arsenic exposure: linked to groundwater in specific geological zones
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Arsenic Risk Zones
@@ -44,7 +44,7 @@ def compute_waterlogging_risk(year, region, scale=1000):
     Higher ratio = more waterlogging = higher disease risk.
     """
     from data_acquisition import get_seasonal_composite
-    from water_classification import classify_water, compute_water_area
+    from water_classification import classify_water
 
     try:
         dry_comp = get_seasonal_composite(year, "dry", "landsat", region)
@@ -100,7 +100,7 @@ def compute_mosquito_habitat(year, region):
     # Standing water: LSWI > 0
     standing_water = lswi.gt(0).rename("standing_water")
 
-    # Temperature suitable for mosquitoes (> 20C) — assumed true during monsoon
+    # Temperature suitable for mosquitoes (> 20C), assumed true during monsoon
     # Use vegetation proxy: flooded vegetation = ideal habitat
     from land_cover import get_dynamic_world
     try:
@@ -121,7 +121,7 @@ def compute_air_pollution_risk(year, region, scale=5000):
     if year < 2019:
         return None
 
-    from air_quality import get_no2, get_aerosol_index
+    from air_quality import get_aerosol_index, get_no2
     try:
         # Dry season (worst air quality: Nov-Mar)
         no2 = get_no2(f"{year}-11-01", f"{year + 1}-03-31", region)

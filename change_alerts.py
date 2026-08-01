@@ -4,8 +4,8 @@ Flags statistically significant anomalies in forest loss, flood extent,
 construction surge, NDVI depression, and air quality.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Forest Loss Alert (Hansen)

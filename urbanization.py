@@ -3,8 +3,8 @@ Urbanization analysis – built-up area tracking, urban sprawl detection,
 settlement classification using GHSL, Dynamic World, and Landsat-derived indices.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # GHSL P2023A available epochs (5-year intervals)
 GHSL_EPOCHS = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
