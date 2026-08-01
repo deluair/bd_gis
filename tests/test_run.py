@@ -53,6 +53,22 @@ def test_partial_join_records_caveat(tmp_path):
     assert any("did not match" in c for c in card["caveats"])
 
 
+def test_reference_unit_without_prediction_records_caveat(tmp_path):
+    # Regression: the satellite side uses GAUL 2015 (7 divisions) while HIES
+    # reports 8, so Mymensingh was scored as a clean join over a partial area.
+    ref = load_hies_division_hcr()
+    predicted = {k: v * 2 for k, v in ref.items()}
+    dropped = predicted.pop("Mymensingh")
+    assert dropped is not None
+    card = validate_indicator(
+        "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
+    )
+    assert any("Mymensingh" in c and "no prediction" in c for c in card["caveats"])
+    assert card["coverage"] == {
+        "n_predicted": len(ref) - 1, "n_reference": len(ref), "n_matched": len(ref) - 1
+    }
+
+
 def test_main_cli_writes_card(tmp_path, monkeypatch, capsys):
     import config
     from validation import run as runmod

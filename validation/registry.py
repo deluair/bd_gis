@@ -1,5 +1,9 @@
 """Quality-tier thresholds and the per-indicator validation registry."""
 
+# GAUL 2015 spells two divisions differently from BBS. Reuse the single mapping
+# already maintained in calibrate_poverty rather than keeping a second copy.
+from calibrate_poverty import GEE_TO_HIES
+
 TIER_THRESHOLDS = {
     "continuous": {"A": 0.8, "B": 0.5},   # pearson r
     "categorical": {"A": 0.85, "B": 0.7},  # overall accuracy
@@ -53,5 +57,10 @@ INDICATORS = {
         "reference": "hies_division_hcr",
         "reference_source": "HIES 2022 (BBS)",
         "reference_citation": "BBS, Household Income and Expenditure Survey 2022, Final Report, December 2023",
+        "key_aliases": GEE_TO_HIES,
+        "static_caveats": [
+            "Geography mismatch: the satellite side uses FAO GAUL 2015 level-1 boundaries, which predate the 2015 creation of Mymensingh and therefore carry 7 divisions, while HIES 2022 reports 8. Mymensingh has no satellite counterpart, and GAUL 'Dhaka' still contains the area BBS reports separately as Mymensingh, so the Dhaka pair mixes two BBS reporting units.",
+            "Unit mismatch: the predicted value is a unitless 0-1 composite index and the reference is a headcount percentage. bias, mae and rmse are differences between incommensurate units and are NOT interpretable; only pearson_r, which is invariant to affine rescaling, should be read from this card.",
+        ],
     },
 }
