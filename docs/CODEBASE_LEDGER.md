@@ -93,3 +93,7 @@ These were renamed precisely because the original names overclaimed. Do not rena
 | 2026-08-01 | Missing-comma audit | Reviewed all 26 `ISC004` sites | All deliberate prose wrapping, no data corruption |
 | 2026-08-01 | Dependency reality | Cross-checked every third-party import against `requirements.txt` | Reconciled, see Resolved |
 | 2026-08-01 | Secrets scan | Grepped for credentials, keys and `.env` | None committed. The GCP project ID is an identifier, not a secret |
+
+## Branch cleanup
+
+2026-08-10 branch cleanup (Claude): chore/repo-hygiene (tip 41c738a, 6 commits, PR #1 open) was genuinely unmerged, finished work: merged into main via --no-ff, gate `uvx ruff check .` passed, branch deleted local+remote. Worktree .claude/worktrees/repo-hygiene was clean: unlocked and removed. Untracked .claude/ in main checkout left untouched. Repo goal state reached: only main remains.
