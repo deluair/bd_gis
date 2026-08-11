@@ -1,8 +1,15 @@
 import math
+
 import pytest
+
 from validation.calibrate import (
-    pearson_r, mae, rmse, bias, continuous_stats,
-    InsufficientData, ZeroVariance,
+    InsufficientData,
+    ZeroVariance,
+    bias,
+    continuous_stats,
+    mae,
+    pearson_r,
+    rmse,
 )
 
 
@@ -44,6 +51,6 @@ def test_categorical_overall_accuracy():
 
 
 def test_categorical_insufficient_data_raises():
-    from validation.calibrate import categorical_stats, InsufficientData
+    from validation.calibrate import InsufficientData, categorical_stats
     with pytest.raises(InsufficientData):
         categorical_stats(["a", "b"], ["a", "b"])

@@ -1,0 +1,31 @@
+target-version = "py310"
+line-length = 120
+
+[lint]
+# Explicit rule set rather than ruff's defaults, so a ruff upgrade cannot
+# silently change what CI enforces.
+select = ["E", "F", "I", "W", "UP", "B", "C4"]
+
+ignore = [
+    # Dataset IDs, GEE band expressions and report prose exceed any sane line
+    # limit; wrapping them hurts readability more than it helps.
+    "E501",
+    # Scripts call ee.Initialize() and set up output paths before importing the
+    # analysis modules that depend on that setup. Ordering is deliberate.
+    "E402",
+    # zip(strict=) would change runtime behaviour on ragged inputs. Revisit
+    # deliberately rather than as part of a lint sweep.
+    "B905",
+    # Unused loop variables are usually the key half of a .items() pair kept for
+    # readability.
+    "B007",
+    # 11 real unused locals remain, two of which are substantive (see
+    # docs/CODEBASE_LEDGER.md, open issues). Enabling this would force either a
+    # semantic change or a noqa sweep; both are tracked in the ledger instead.
+    "F841",
+]
+
+[lint.per-file-ignores]
+# Blind `except Exception` is the documented pipeline contract: a failing
+# feature prints and the run continues rather than aborting a multi-hour job.
+"*.py" = ["BLE001"]

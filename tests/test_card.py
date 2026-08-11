@@ -1,5 +1,6 @@
 import pytest
-from validation.card import build_card, write_card, read_card
+
+from validation.card import build_card, read_card, write_card
 
 
 def _sample():
@@ -17,7 +18,8 @@ def test_build_card_has_all_fields():
     c = _sample()
     expected = {"indicator_id", "label", "classification", "quality_tier",
                 "reference_source", "reference_citation", "spatial_unit", "period",
-                "comparison", "n", "stats", "caveats", "generated_at", "generated_by"}
+                "comparison", "n", "stats", "caveats", "generated_at", "generated_by",
+                "predicted_source", "coverage"}
     assert set(c) == expected
     assert c["generated_by"] == "validation.run"
 

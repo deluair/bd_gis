@@ -3,8 +3,8 @@ Vegetation and agriculture analysis – NDVI/EVI time series, crop mapping,
 forest change detection using MODIS, Landsat, and Hansen Global Forest Change.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Vegetation Indices
@@ -131,7 +131,7 @@ def compute_seasonal_ndvi(year, region, scale=1000):
                 maxPixels=cfg.MAX_PIXELS, bestEffort=True,
             )
             results[f"{season}_ndvi"] = stats.get(ndvi_band)
-        except Exception as e:
+        except Exception:
             results[f"{season}_ndvi"] = None
     return results
 

@@ -5,27 +5,27 @@ actual GEE thumbnail tiles and composing them with matplotlib.
 NOTE: standalone, not imported by the pipeline or app. Figure titles and captions
 must not embed hardcoded area figures; derive them from pipeline outputs.
 """
+import io
 import os
 import sys
-import io
 import urllib.request
-import numpy as np
-import matplotlib.pyplot as plt
+
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image
 
 # Setup
 sys.path.insert(0, os.path.dirname(__file__))
+import ee
+
 import config as cfg
 
-import ee
 ee.Initialize(project=cfg.GEE_PROJECT)
 
-from data_acquisition import (
-    get_study_area, get_seasonal_composite, get_jrc_water, get_srtm_dem
-)
+from data_acquisition import get_jrc_water, get_seasonal_composite, get_srtm_dem, get_study_area
+from water_change import classify_water_persistence, compute_water_occurrence
 from water_classification import classify_water
-from water_change import compute_water_occurrence, classify_water_persistence
 
 OUT = cfg.OUTPUT_DIR
 os.makedirs(os.path.join(OUT, "report_maps"), exist_ok=True)
@@ -88,7 +88,7 @@ def map_study_area():
         ax.annotate(name.replace(" Haor", ""), (h["lon"], h["lat"]),
                     xytext=(5, 5), textcoords="offset points", fontsize=8,
                     fontweight="bold", color="black",
-                    bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7))
+                    bbox={"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.7})
 
     # Colorbar
     sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn_r, norm=plt.Normalize(0, 50))
@@ -288,7 +288,7 @@ def map_river_corridors():
         lats = [p[0] for p in pts]
         ax.plot(lons, lats, "w--", linewidth=1.5, alpha=0.8)
         ax.annotate(name, (lons[0], lats[0]), fontsize=9, fontweight="bold",
-                    color="white", bbox=dict(boxstyle="round", fc="black", alpha=0.5))
+                    color="white", bbox={"boxstyle": "round", "fc": "black", "alpha": 0.5})
 
     ax.set_xlabel("Longitude (°E)", fontsize=11)
     ax.set_ylabel("Latitude (°N)", fontsize=11)

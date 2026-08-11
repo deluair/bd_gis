@@ -3,15 +3,15 @@ Visualization module – interactive maps (geemap/folium), time series plots,
 change maps, and report-ready figures.
 """
 import os
+
 import ee
 import geemap
-import folium
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
+
 import config as cfg
 from export_utils import ensure_output_dir
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Color Palettes
@@ -104,9 +104,7 @@ def create_temporal_map(water_masks_by_year, name_prefix="Water"):
     colors = plt.cm.viridis(np.linspace(0, 1, len(water_masks_by_year)))
 
     for i, (year, mask) in enumerate(sorted(water_masks_by_year.items())):
-        color = "#{:02x}{:02x}{:02x}".format(
-            int(colors[i][0] * 255), int(colors[i][1] * 255), int(colors[i][2] * 255)
-        )
+        color = f"#{int(colors[i][0] * 255):02x}{int(colors[i][1] * 255):02x}{int(colors[i][2] * 255):02x}"
         m.addLayer(
             mask.selfMask(),
             {"min": 0, "max": 1, "palette": ["white", color]},

@@ -1,5 +1,5 @@
-from validation.run import validate_indicator
 from validation.reference import load_hies_division_hcr
+from validation.run import validate_indicator
 
 
 def test_perfect_correlation_is_tier_a(tmp_path):
@@ -15,7 +15,7 @@ def test_perfect_correlation_is_tier_a(tmp_path):
 
 def test_zero_variance_falls_back_to_tier_c(tmp_path):
     ref = load_hies_division_hcr()
-    predicted = {k: 5.0 for k in ref}  # constant -> zero variance
+    predicted = dict.fromkeys(ref, 5.0)  # constant -> zero variance
     card = validate_indicator(
         "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
     )
@@ -31,6 +31,7 @@ def test_unknown_indicator_raises(tmp_path):
 
 def test_non_continuous_comparison_raises(tmp_path, monkeypatch):
     import pytest
+
     from validation import registry
     monkeypatch.setitem(
         registry.INDICATORS, "fake_cat",
@@ -50,6 +51,22 @@ def test_partial_join_records_caveat(tmp_path):
         "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
     )
     assert any("did not match" in c for c in card["caveats"])
+
+
+def test_reference_unit_without_prediction_records_caveat(tmp_path):
+    # Regression: the satellite side uses GAUL 2015 (7 divisions) while HIES
+    # reports 8, so Mymensingh was scored as a clean join over a partial area.
+    ref = load_hies_division_hcr()
+    predicted = {k: v * 2 for k, v in ref.items()}
+    dropped = predicted.pop("Mymensingh")
+    assert dropped is not None
+    card = validate_indicator(
+        "gis_poverty_index", predicted, "2026-05-29T00:00:00Z", str(tmp_path)
+    )
+    assert any("Mymensingh" in c and "no prediction" in c for c in card["caveats"])
+    assert card["coverage"] == {
+        "n_predicted": len(ref) - 1, "n_reference": len(ref), "n_matched": len(ref) - 1
+    }
 
 
 def test_main_cli_writes_card(tmp_path, monkeypatch, capsys):

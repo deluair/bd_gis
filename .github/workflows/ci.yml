@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      # The validation suite is pure Python and needs no Earth Engine
+      # credentials, so it runs on every push.
+      - run: pip install pytest numpy earthengine-api
+      - run: pytest -q
+
+  imports:
+    # Installs requirements.txt for real and imports every module, so a missing
+    # or stale dependency fails here instead of on a user's first clone.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Import every module
+        run: |
+          python - <<'PY'
+          import importlib, pathlib, sys
+          # These three call ee.Initialize() at import time and need credentials.
+          SKIP = {"generate_report_maps", "generate_publication_maps",
+                  "generate_chapter_thumbnails"}
+          failed = []
+          for path in sorted(pathlib.Path(".").glob("*.py")):
+              if path.stem in SKIP:
+                  continue
+              try:
+                  importlib.import_module(path.stem)
+              except Exception as exc:
+                  failed.append(f"{path.stem}: {type(exc).__name__}: {exc}")
+          for line in failed:
+              print("FAIL", line)
+          print(f"skipped (need GEE credentials): {sorted(SKIP)}")
+          sys.exit(1 if failed else 0)
+          PY

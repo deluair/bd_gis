@@ -4,13 +4,15 @@ track area over time, analyze seasonal filling cycles, and compare
 pre-2000 vs post-2000 dynamics.
 """
 import ee
+
 import config as cfg
 from data_acquisition import (
-    get_study_area, get_srtm_dem, get_seasonal_composite,
-    get_landsat_collection, make_composite
+    get_landsat_collection,
+    get_seasonal_composite,
+    get_srtm_dem,
+    make_composite,
 )
 from water_classification import classify_water, compute_water_area
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Haor Boundary Delineation
@@ -41,7 +43,7 @@ def delineate_haor_boundary(haor_name, region=None):
     water_union = ee.Image.constant(0)
     sample_years = sorted(
         set(range(2000, 2025, 2))
-        | set(y for y in cfg.EXTREME_FLOOD_YEARS if 2000 <= y <= 2024)
+        | {y for y in cfg.EXTREME_FLOOD_YEARS if 2000 <= y <= 2024}
     )
     skipped = 0
     for year in sample_years:

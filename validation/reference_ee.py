@@ -1,6 +1,7 @@
 """Earth Engine ground-truth reference loaders. These call GEE (need init), so they
 are isolated from the pure loaders in reference.py. Each returns {spatial_unit: value}."""
 import ee
+
 import config as cfg
 from data_acquisition import get_admin_boundaries
 

@@ -8,8 +8,8 @@ ESA=Mangrove; Haors: MODIS=Wetlands/Croplands, DW=flooded_vegetation).
 Cross-product validation is not yet implemented.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data Loading

@@ -3,6 +3,7 @@ River erosion and channel migration analysis – extract centerlines,
 compute lateral migration, and identify erosion hotspots.
 """
 import ee
+
 import config as cfg
 
 # Timeout for individual GEE getInfo() calls (seconds)
@@ -15,20 +16,18 @@ class GEETimeoutError(Exception):
 
 def _getinfo_with_timeout(ee_obj, timeout=GEE_TIMEOUT):
     """Thread-safe getInfo() with timeout using concurrent.futures."""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(ee_obj.getInfo)
         try:
             return future.result(timeout=timeout)
-        except FuturesTimeout:
-            raise GEETimeoutError("GEE call timed out")
+        except FuturesTimeout as exc:
+            raise GEETimeoutError("GEE call timed out") from exc
         except Exception:
             raise
-from data_acquisition import (
-    get_study_area, get_landsat_collection, make_composite
-)
+from data_acquisition import get_landsat_collection, make_composite
 from water_classification import classify_water
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # River Corridor ROI

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Download satellite products for local computation (Bangladesh subset)."""
 import argparse
-import os
 import sys
 import zipfile
 from pathlib import Path
@@ -169,7 +168,6 @@ def clip_to_bangladesh(src_path, dst_path):
     try:
         import rasterio
         from rasterio.mask import mask as rio_mask
-        from rasterio.transform import from_bounds
         from shapely.geometry import box
     except ImportError as e:
         print(f"  SKIP clip (missing dependency: {e})")

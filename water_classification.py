@@ -3,8 +3,8 @@ Water classification module – spectral water indices, Otsu auto-thresholding,
 and majority-voting ensemble classifier.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Water Indices

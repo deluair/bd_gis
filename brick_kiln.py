@@ -5,8 +5,8 @@ Detection uses MODIS LST hotspots + Landsat SWIR bare-soil index in known kiln z
 Emission estimates follow literature values per kiln (CO2 and PM2.5).
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data Loading

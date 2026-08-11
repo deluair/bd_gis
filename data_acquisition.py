@@ -3,8 +3,8 @@ Data acquisition module – GEE authentication, image collection retrieval,
 cloud masking, band harmonization, and composite generation.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GEE Initialization

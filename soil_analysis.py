@@ -9,8 +9,8 @@ The 'climate_year' parameter affects only dynamic inputs
 do not change between analysis years.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Soil Properties (OpenLandMap) -- STATIC circa 2017, no temporal variation

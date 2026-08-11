@@ -6,7 +6,9 @@ or a specific division name (e.g., 'dhaka', 'chittagong').
 import os
 
 # ── GEE Project ──────────────────────────────────────────────────────────────
-GEE_PROJECT = "gen-lang-client-0432004086"
+# Every Earth Engine call bills against a Google Cloud project. Override with
+# the GEE_PROJECT env var; the default is only useful to the original author.
+GEE_PROJECT = os.environ.get("GEE_PROJECT", "gen-lang-client-0432004086")
 
 # ── Scope ────────────────────────────────────────────────────────────────────
 # "sylhet" | "national" | division name (e.g. "dhaka", "chittagong")

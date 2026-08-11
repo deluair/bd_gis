@@ -3,8 +3,8 @@ Climate analysis – rainfall (CHIRPS), land surface temperature (MODIS LST),
 drought indices, and ERA5 reanalysis for long-term climate trend detection.
 """
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODIS LST QA Masking

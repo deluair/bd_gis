@@ -4,7 +4,7 @@ Splits heavy computations across Bangladesh's 8 administrative divisions
 to avoid GEE timeouts and memory limits.
 """
 import ee
-import config as cfg
+
 from data_acquisition import get_division_boundaries_all
 
 

@@ -7,6 +7,7 @@ are STATIC PLACEHOLDERS, not read from pipeline outputs, so the numbers are not
 data-verified. Rebuild to read from outputs / the parquet lake before publishing.
 """
 import os
+
 from fpdf import FPDF
 
 OUT = os.path.join(os.path.dirname(__file__), "outputs")
@@ -618,8 +619,8 @@ def build_report():
         "requiring manual interpretation from the timeseries data",
         "Administrative boundaries: FAO GAUL may not precisely match official Bangladesh boundaries",
     ]
-    for l in limits:
-        pdf.bullet(l)
+    for limit in limits:
+        pdf.bullet(limit)
 
     # ── Footer ──
     pdf.ln(10)

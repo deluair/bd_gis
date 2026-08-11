@@ -18,8 +18,8 @@ Key indicators for slum identification:
 # indices, not definitive slum maps. See Kuffer et al. 2016 for resolution
 # requirements in slum mapping.
 import ee
-import config as cfg
 
+import config as cfg
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Known Informal Settlement Areas (for calibration)
@@ -132,7 +132,7 @@ def compute_light_irregularity(year, region):
     Low nighttime light per built-up area = poor infrastructure quality.
     Slums may have electricity but lower/irregular intensity.
     """
-    from nightlights import get_nightlights, _sensor_scale_range
+    from nightlights import _sensor_scale_range, get_nightlights
     from urbanization import get_ghsl_built
 
     lights = get_nightlights(year, region)

@@ -3,12 +3,10 @@ Water body gain/loss detection – water occurrence frequency mapping,
 permanent/seasonal/rare classification, and decade-wise change detection.
 """
 import ee
-import config as cfg
-from data_acquisition import (
-    get_study_area, get_landsat_collection, make_composite, get_jrc_water
-)
-from water_classification import classify_water, compute_water_area
 
+import config as cfg
+from data_acquisition import get_jrc_water, get_landsat_collection, get_study_area, make_composite
+from water_classification import classify_water
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Water Occurrence Frequency

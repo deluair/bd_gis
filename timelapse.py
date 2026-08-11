@@ -15,9 +15,9 @@ import os
 import urllib.request
 
 import ee
+
 import config as cfg
 from export_utils import ensure_output_dir
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Internal helpers
@@ -351,7 +351,7 @@ def run_timelapse(region=None):
 
     Returns dict of {name: path_or_None}.
     """
-    from data_acquisition import init_gee, get_study_area
+    from data_acquisition import get_study_area, init_gee
 
     init_gee()
     if region is None:

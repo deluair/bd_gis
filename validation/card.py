@@ -5,7 +5,8 @@ import os
 
 def build_card(indicator_id, label, classification, quality_tier, reference_source,
                reference_citation, spatial_unit, period, comparison, n, stats,
-               caveats, generated_at, generated_by="validation.run"):
+               caveats, generated_at, generated_by="validation.run",
+               predicted_source="", coverage=None):
     if classification not in ("measured", "proxy"):
         raise ValueError("classification must be 'measured' or 'proxy'")
     if quality_tier not in ("A", "B", "C"):
@@ -23,6 +24,12 @@ def build_card(indicator_id, label, classification, quality_tier, reference_sour
         "n": n,
         "stats": stats,
         "caveats": list(caveats),
+        # Where the predicted values came from. Without this a card cannot be
+        # traced back to its input or reproduced.
+        "predicted_source": predicted_source,
+        # n_predicted / n_reference / n_matched, so a partial join is visible
+        # on the card instead of only in the caveat text.
+        "coverage": dict(coverage or {}),
         "generated_at": generated_at,
         "generated_by": generated_by,
     }

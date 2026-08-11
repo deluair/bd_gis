@@ -10,7 +10,6 @@ import os
 
 import numpy as np
 import rasterio
-from rasterio.warp import reproject, Resampling
 
 LOCAL_DATA = os.path.join(os.path.dirname(__file__), "local_data")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
@@ -133,7 +132,7 @@ def compute_landcover_stats():
         water = results.get("permanent_water_km2", 0) + results.get("seasonal_water_km2", 0)
         other = total - forest - built - water  # cropland + other
 
-        print(f"\n  === Land Cover Summary (approximate) ===")
+        print("\n  === Land Cover Summary (approximate) ===")
         print(f"    Total area:     {total:>10,.0f} km2")
         print(f"    Forest:         {forest:>10,.0f} km2  ({forest/total*100:.1f}%)")
         print(f"    Built-up:       {built:>10,.0f} km2  ({built/total*100:.1f}%)")
@@ -165,7 +164,7 @@ def compute_slum_proxy():
 
     thresholds = [1000, 2000, 5000, 10000, 20000]
     results = {}
-    print(f"  Population density distribution (1km pixels):")
+    print("  Population density distribution (1km pixels):")
     for t in thresholds:
         count = (valid_pop >= t).sum()
         results[f"pixels_gte_{t}"] = int(count)

@@ -7,6 +7,7 @@ Use _sensor_scale_range() for normalization. Cross-sensor time series
 require intercalibration (e.g., Li et al. 2017, Elvidge et al. 2014).
 """
 import ee
+
 import config as cfg
 
 # Sensor-specific "lit" thresholds for electrification classification.
