@@ -128,7 +128,8 @@ outputs/                # rivers/ floods/ haors/ changes/ nightlights/ urbanizat
 | MODIS LST | `MODIS_LST` | 2000-2025 | 1km | temperature, UHI |
 | CHIRPS | `CHIRPS` | 1981-2025 | 5.5km | rainfall |
 | ERA5 Land | `ERA5_LAND` | 1950-2025 | 11km | climate reanalysis |
-| WorldPop | `WORLDPOP` | 2000-2020 | 100m | population density |
+| WorldPop | `WORLDPOP` | 2000-2020 | 100m | population density (residential) |
+| LandScan Global | `LANDSCAN` | 2000-2024 | 928m | LECZ exposure (ambient) |
 | GHSL Built | `GHSL_BUILT` | 1975-2030 | 100m | urbanization |
 | GHSL SMOD | `GHSL_SMOD` | 1975-2030 | 1km | settlement classification |
 | OpenLandMap Soil | `OPENLANDMAP_SOIL` | static | 250m | soil properties |
@@ -194,6 +195,10 @@ outputs/                # rivers/ floods/ haors/ changes/ nightlights/ urbanizat
 - **Dynamic World starts 2015**: no construction detection before that
 - **GHSL epochs are 5-year intervals**: requesting 2017 snaps to 2015 or 2020
 - **WorldPop ends at 2020**: poverty analysis clamps to available years
+- **WorldPop is residential, LandScan is ambient**: never mix them in one series or ratio
+- **LandScan breaks between 2015 and 2016** (BD total -7.52%, 12.7M people): no cross-boundary change analysis, same rule as DMSP/VIIRS 2013/2014
+- **Population grids are counts per cell**: reduce at the grid's own native scale, and use `coastal.lecz_coverage_fraction` (not `updateMask`) when the mask is finer than the cells
+- **ee reducers like `.median()` drop the projection**: pin it with `ee.Projection("EPSG:4326").atScale(scale)` before `reduceResolution`/`reproject`
 - **Sentinel-5P starts late 2018**: no air quality data before that
 - **Rice phenology detection requires correct season dates**: aman (Jul-Nov), boro (Dec-May), aus (Mar-Aug)
 - **GLCM texture (slum_mapping)** requires integer input: multiply reflectance by 10000 first

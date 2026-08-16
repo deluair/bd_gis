@@ -1438,6 +1438,9 @@ def run_coastal():
         export_csv([{
             "threshold_m": lp.get("threshold_m"),
             "year": lp.get("year"),
+            "population_source": lp.get("population_source"),
+            "population_measure": lp.get("population_measure"),
+            "scale_m": lp.get("scale_m"),
             "population_in_lecz": _resolve_ee(lp.get("population_in_lecz")),
         }], "lecz_population.csv", "coastal")
 

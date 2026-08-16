@@ -474,11 +474,44 @@ SOLAR_RADIATION = {
 }
 
 # ── Population Density ──────────────────────────────────────────────────────
+# `measure` distinguishes what the grid counts and is NOT interchangeable:
+#   residential -- where people sleep (census-disaggregated, night-time)
+#   ambient     -- 24-hour average of where people actually are (work, school,
+#                  transit included), which is the right denominator for
+#                  exposure but not for a household or dwelling count.
+# Never build a time series or a ratio that mixes the two.
 WORLDPOP = {
     "collection": "WorldPop/GP/100m/pop",
     "band": "population",
     "scale": 100,
     "years": (2000, 2020),
+    "measure": "residential",
+}
+# ORNL LandScan Global, CC BY 4.0, via the Samapriya Roy community mirror
+# (not an official ORNL or Google asset: expect it to lag the ORNL portal).
+# Cite ORNL, not the mirror. LandScan Global 2024: doi:10.48690/1532445
+#
+# Verified live against Earth Engine on 2026-08-16:
+#   25 images, ids landscan-global-2000 .. landscan-global-2024
+#   band "b1", nominalScale 927.662423277276 m (30 arc-second), EPSG:4326
+#   Bangladesh national sums 128.8M (2000) -> 168.3M (2024), which brackets
+#   the UN WPP path, so band and scale are confirmed correct.
+# The Google catalog page states 1000 m and a 2023 end year; both are stale.
+LANDSCAN = {
+    "collection": "projects/sat-io/open-datasets/ORNL/LANDSCAN_GLOBAL",
+    "band": "b1",
+    "scale": 927.67,
+    "years": (2000, 2024),
+    "measure": "ambient",
+    # Hard methodology break: the Bangladesh national total falls 7.52%
+    # (168.72M -> 156.03M) from 2015 to 2016, a loss of 12.7M people that did
+    # not happen. LandScan re-runs its model each year on the best inputs then
+    # available and does not reprocess history, so the operational releases are
+    # not a consistent panel. ORNL: "users should avoid conducting change
+    # analysis at the cell level". Treat 2015/2016 exactly like the DMSP/VIIRS
+    # 2013/2014 boundary. For change over time use the reprocessed consistent
+    # 2000-2022 series (doi:10.1038/s41597-025-04817-z), not this collection.
+    "break_year": 2016,
 }
 GPW_POPULATION = {
     "collection": "CIESIN/GPWv411/GPW_Population_Density_Adjusted_to_2015_UNWPP_Country_Totals_Rev11",

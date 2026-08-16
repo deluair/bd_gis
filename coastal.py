@@ -56,26 +56,111 @@ def compute_lecz_area(region, thresholds=None, scale=30):
     return results
 
 
-def compute_lecz_population(region, year=2020, threshold_m=5, scale=100):
-    """Estimate population living in LECZ."""
-    lecz = map_lecz(region, threshold_m)
-    pop = (
-        ee.ImageCollection(cfg.WORLDPOP["collection"])
-        .filterDate(f"{year}-01-01", f"{year}-12-31")
-        .filterBounds(region)
-        .select(cfg.WORLDPOP["band"])
-        .median()
+def lecz_coverage_fraction(region, threshold_m, target_scale):
+    """Share of each `target_scale` cell that lies inside the LECZ (0-1).
+
+    A population grid holds a *count per cell*, so masking it with a mask finer
+    than its own cells is all-or-nothing: a 928 m LandScan cell is kept whole or
+    dropped whole. Against a 30 m SRTM mask over a fragmented delta fringe that
+    is not a rounding error. Measured over COASTAL_BOUNDS for 2020, naive
+    masking undercounts LandScan by 65% (2.86M vs 8.21M) and WorldPop by 10%
+    (6.27M vs 6.94M). Weighting each cell by the share of it actually inside the
+    zone removes the quantisation and makes coarse and fine grids comparable.
+
+    maxPixels=4096 caps the aggregation at 64x64 SRTM pixels, i.e. target scales
+    up to ~1.9 km. Coarser targets need a larger cap.
+    """
+    dem = ee.Image(cfg.SRTM_DEM).select("elevation")
+    # unmask(0) so ocean and SRTM voids count as outside the zone rather than
+    # propagating a mask; setDefaultProjection because unmask() drops it.
+    lecz01 = (
+        dem.lt(threshold_m).And(dem.gte(0)).unmask(0)
+        .setDefaultProjection(dem.projection())
+    )
+    return (
+        lecz01.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=4096)
+        .reproject(ee.Projection("EPSG:4326").atScale(target_scale))
         .clip(region)
     )
-    pop_in_lecz = pop.updateMask(lecz)
+
+
+def _pop_spec(source):
+    """Resolve a population source name to its config block."""
+    try:
+        return {"landscan": cfg.LANDSCAN, "worldpop": cfg.WORLDPOP}[source]
+    except KeyError:
+        raise ValueError(
+            f"unknown population source {source!r}, expected 'landscan' or 'worldpop'"
+        ) from None
+
+
+def get_population_grid(year, region, source="landscan"):
+    """Population count grid for `year`, clipped to `region`.
+
+    `source` is explicit and has no default fallback across products, because
+    LandScan counts *ambient* population and WorldPop counts *residential*:
+    mixing them in one series or ratio compares different quantities.
+
+    Returns (image renamed "population", native scale in metres). The scale is
+    returned with the image on purpose. Both grids are counts per cell, so
+    summing one at the wrong scale rescales the answer: WorldPop is people per
+    100 m cell and summing it at 1 km undercounts by ~100x. Always reduce with
+    the scale this returns.
+    """
+    spec = _pop_spec(source)
+    lo, hi = spec["years"]
+    if not lo <= year <= hi:
+        raise ValueError(
+            f"{source} has no {year} layer (covers {lo}-{hi}). Pick a covered "
+            f"year explicitly rather than letting it clamp silently."
+        )
+    img = (
+        ee.ImageCollection(spec["collection"])
+        .filterDate(f"{year}-01-01", f"{year}-12-31")
+        .filterBounds(region)
+        .select(spec["band"])
+        .median()
+        .clip(region)
+        .rename("population")
+    )
+    return img, spec["scale"]
+
+
+def compute_lecz_population(region, year=None, threshold_m=5, source="landscan",
+                            scale=None):
+    """Estimate population living in the low-elevation coastal zone.
+
+    Defaults to LandScan: ambient population is the correct exposure basis for
+    a storm surge, which does not wait for people to be home, and LandScan runs
+    to 2024 where WorldPop stops at 2020. `year` defaults to the newest layer
+    the chosen source has, so this tracks config instead of pinning a year that
+    silently goes stale.
+
+    Returns the count alongside its provenance so the number can never be
+    quoted without knowing which grid and which year produced it.
+    """
+    spec = _pop_spec(source)
+    if year is None:
+        year = spec["years"][1]
+    pop, native_scale = get_population_grid(year, region, source)
+    scale = native_scale if scale is None else scale
+    frac = lecz_coverage_fraction(region, threshold_m, scale)
+    pop_in_lecz = pop.multiply(frac).rename("population")
+    # bestEffort=False deliberately, against the usual convention here. This is
+    # a summed count, not a mean: if the reduction exceeded maxPixels,
+    # bestEffort would silently coarsen the scale and return a wrong
+    # population. Better to raise than to publish a quiet error.
     total = pop_in_lecz.reduceRegion(
         reducer=ee.Reducer.sum(), geometry=region,
-        scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=True,
+        scale=scale, maxPixels=cfg.MAX_PIXELS, bestEffort=False,
     )
     return {
         "threshold_m": threshold_m,
         "year": year,
-        "population_in_lecz": total.get(cfg.WORLDPOP["band"]),
+        "population_source": source,
+        "population_measure": spec["measure"],
+        "scale_m": scale,
+        "population_in_lecz": total.get("population"),
     }
 
 
